@@ -1,0 +1,320 @@
+{
+  "metadata": {
+    "name": "Penang Public Transport Teaching Subset",
+    "source": "Malaysia Open Data GTFS Static API",
+    "primarySourceUrl": "https://api.data.gov.my/gtfs-static/prasarana?category=rapid-bus-penang",
+    "secondarySourceUrl": "https://api.data.gov.my/gtfs-static/ktmb",
+    "documentationUrl": "https://developer.data.gov.my/realtime-api/gtfs-static",
+    "snapshotDate": "2026-08-30",
+    "coverage": "Compact offline subset for the mobile application assignment; not the complete GTFS feed"
+  },
+  "stops": [
+    {
+      "id": "tarumt_penang",
+      "name": "TAR UMT Penang Campus",
+      "latitude": 5.4663,
+      "longitude": 100.2866,
+      "accessible": true
+    },
+    {
+      "id": "tanjung_bungah",
+      "name": "Tanjung Bungah",
+      "latitude": 5.4688,
+      "longitude": 100.2915,
+      "accessible": true
+    },
+    {
+      "id": "gurney_plaza",
+      "name": "Gurney Plaza",
+      "latitude": 5.4376,
+      "longitude": 100.3091,
+      "accessible": true
+    },
+    {
+      "id": "komtar",
+      "name": "KOMTAR Bus Terminal",
+      "latitude": 5.4145,
+      "longitude": 100.3292,
+      "accessible": true
+    },
+    {
+      "id": "jetty",
+      "name": "Weld Quay (Jetty)",
+      "latitude": 5.4131,
+      "longitude": 100.3423,
+      "accessible": true
+    },
+    {
+      "id": "batu_ferringhi",
+      "name": "Batu Ferringhi",
+      "latitude": 5.4748,
+      "longitude": 100.2453,
+      "accessible": true
+    },
+    {
+      "id": "teluk_bahang",
+      "name": "Teluk Bahang",
+      "latitude": 5.4599,
+      "longitude": 100.2116,
+      "accessible": false
+    },
+    {
+      "id": "queensbay",
+      "name": "Queensbay Mall",
+      "latitude": 5.3332,
+      "longitude": 100.3067,
+      "accessible": true
+    },
+    {
+      "id": "penang_airport",
+      "name": "Penang International Airport",
+      "latitude": 5.2972,
+      "longitude": 100.2768,
+      "accessible": true
+    },
+    {
+      "id": "butterworth",
+      "name": "Butterworth Station",
+      "latitude": 5.3940,
+      "longitude": 100.3667,
+      "accessible": true
+    },
+    {
+      "id": "bukit_mertajam",
+      "name": "Bukit Mertajam Station",
+      "latitude": 5.3630,
+      "longitude": 100.4610,
+      "accessible": true
+    },
+    {
+      "id": "kl_sentral",
+      "name": "KL Sentral",
+      "latitude": 3.1343,
+      "longitude": 101.6861,
+      "accessible": true
+    },
+    {
+      "id": "pasar_seni",
+      "name": "Pasar Seni",
+      "latitude": 3.1424,
+      "longitude": 101.6953,
+      "accessible": true
+    },
+    {
+      "id": "masjid_jamek",
+      "name": "Masjid Jamek",
+      "latitude": 3.1493,
+      "longitude": 101.6966,
+      "accessible": true
+    },
+    {
+      "id": "bukit_bintang",
+      "name": "Bukit Bintang",
+      "latitude": 3.1469,
+      "longitude": 101.7113,
+      "accessible": true
+    },
+    {
+      "id": "titiwangsa",
+      "name": "Titiwangsa",
+      "latitude": 3.1735,
+      "longitude": 101.6954,
+      "accessible": true
+    },
+    {
+      "id": "kajang",
+      "name": "Kajang",
+      "latitude": 2.9822,
+      "longitude": 101.7907,
+      "accessible": true
+    },
+    {
+      "id": "gombak",
+      "name": "Gombak",
+      "latitude": 3.2313,
+      "longitude": 101.7249,
+      "accessible": true
+    }
+  ],
+  "routes": [
+    {
+      "id": "rapid_101",
+      "number": "101",
+      "name": "Weld Quay - Teluk Bahang",
+      "mode": "Bus",
+      "colour": "#2E7D32",
+      "baseFare": 2.00,
+      "minutesPerStop": 7,
+      "frequencyMinutes": 15,
+      "accessible": true,
+      "liveSupported": true,
+      "stopIds": [
+        "jetty",
+        "komtar",
+        "gurney_plaza",
+        "tanjung_bungah",
+        "tarumt_penang",
+        "batu_ferringhi",
+        "teluk_bahang"
+      ]
+    },
+    {
+      "id": "rapid_102",
+      "number": "102",
+      "name": "Airport - Teluk Bahang",
+      "mode": "Bus",
+      "colour": "#1565C0",
+      "baseFare": 3.40,
+      "minutesPerStop": 8,
+      "frequencyMinutes": 30,
+      "accessible": true,
+      "liveSupported": true,
+      "stopIds": [
+        "penang_airport",
+        "queensbay",
+        "komtar",
+        "gurney_plaza",
+        "tanjung_bungah",
+        "tarumt_penang",
+        "batu_ferringhi",
+        "teluk_bahang"
+      ]
+    },
+    {
+      "id": "rapid_401e",
+      "number": "401E",
+      "name": "Weld Quay - Penang Airport",
+      "mode": "Bus",
+      "colour": "#EF6C00",
+      "baseFare": 2.70,
+      "minutesPerStop": 9,
+      "frequencyMinutes": 25,
+      "accessible": true,
+      "liveSupported": true,
+      "stopIds": [
+        "jetty",
+        "komtar",
+        "queensbay",
+        "penang_airport"
+      ]
+    },
+    {
+      "id": "penang_ferry",
+      "number": "FERRY",
+      "name": "Butterworth - Weld Quay",
+      "mode": "Ferry",
+      "colour": "#00897B",
+      "baseFare": 2.00,
+      "minutesPerStop": 15,
+      "frequencyMinutes": 30,
+      "accessible": true,
+      "liveSupported": false,
+      "stopIds": [
+        "butterworth",
+        "jetty"
+      ]
+    },
+    {
+      "id": "ktm_north",
+      "number": "KTM",
+      "name": "Butterworth - Bukit Mertajam",
+      "mode": "KTM",
+      "colour": "#7B1FA2",
+      "baseFare": 3.60,
+      "minutesPerStop": 22,
+      "frequencyMinutes": 60,
+      "accessible": true,
+      "liveSupported": true,
+      "stopIds": [
+        "butterworth",
+        "bukit_mertajam"
+      ]
+    },
+    {
+      "id": "ktm_intercity",
+      "number": "KTM ETS",
+      "name": "Butterworth - KL Sentral",
+      "mode": "KTM",
+      "colour": "#0D47A1",
+      "baseFare": 59.00,
+      "minutesPerStop": 105,
+      "frequencyMinutes": 120,
+      "accessible": true,
+      "liveSupported": true,
+      "stopIds": [
+        "butterworth",
+        "bukit_mertajam",
+        "kl_sentral"
+      ]
+    },
+    {
+      "id": "mrt_kajang",
+      "number": "MRT KG",
+      "name": "Kajang - Pasar Seni",
+      "mode": "MRT",
+      "colour": "#D32F2F",
+      "baseFare": 3.20,
+      "minutesPerStop": 8,
+      "frequencyMinutes": 6,
+      "accessible": true,
+      "liveSupported": false,
+      "stopIds": [
+        "kajang",
+        "bukit_bintang",
+        "pasar_seni"
+      ]
+    },
+    {
+      "id": "lrt_kelana_jaya",
+      "number": "LRT KJ",
+      "name": "Gombak - KL Sentral",
+      "mode": "LRT",
+      "colour": "#F9A825",
+      "baseFare": 2.80,
+      "minutesPerStop": 6,
+      "frequencyMinutes": 5,
+      "accessible": true,
+      "liveSupported": false,
+      "stopIds": [
+        "gombak",
+        "masjid_jamek",
+        "pasar_seni",
+        "kl_sentral"
+      ]
+    },
+    {
+      "id": "kl_monorail",
+      "number": "Monorail",
+      "name": "KL Sentral - Titiwangsa",
+      "mode": "Monorail",
+      "colour": "#7B1FA2",
+      "baseFare": 2.50,
+      "minutesPerStop": 7,
+      "frequencyMinutes": 8,
+      "accessible": true,
+      "liveSupported": false,
+      "stopIds": [
+        "kl_sentral",
+        "bukit_bintang",
+        "titiwangsa"
+      ]
+    },
+    {
+      "id": "gokl_city_bus",
+      "number": "GOKL",
+      "name": "KL Sentral - Pasar Seni",
+      "mode": "Bus",
+      "colour": "#EC407A",
+      "baseFare": 0.00,
+      "minutesPerStop": 9,
+      "frequencyMinutes": 10,
+      "accessible": true,
+      "liveSupported": false,
+      "stopIds": [
+        "kl_sentral",
+        "bukit_bintang",
+        "pasar_seni"
+      ]
+    }
+  ]
+}

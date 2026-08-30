@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
-
+import 'data/local_storage_service.dart';
 import 'screens/splash_screen.dart';
 import 'theme/app_theme.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await LocalStorageService.instance.initialise();
   runApp(const SmartTransportApp());
 }
 

@@ -306,10 +306,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildRoutePreferences() {
-    return Container(
-      decoration: _cardDecoration(),
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppTheme.border),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: Column(
-        children: [
+          children: [
           SwitchListTile(
             value: _preferLowestFare,
             activeColor: AppTheme.primaryBlue,
@@ -393,10 +398,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildSavedPlaces() {
-    return Container(
-      decoration: _cardDecoration(),
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppTheme.border),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: Column(
-        children: [
+          children: [
           _buildSavedPlaceTile(
             icon: Icons.home_outlined,
             title: 'Home',
@@ -529,10 +539,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildAccountSettings() {
-    return Container(
-      decoration: _cardDecoration(),
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppTheme.border),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: Column(
-        children: [
+          children: [
           _buildSettingTile(
             icon: Icons.lock_outline,
             title: 'Change Password',
