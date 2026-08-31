@@ -11,7 +11,9 @@ import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
 
 class TransitMapScreen extends StatefulWidget {
-  const TransitMapScreen({super.key});
+  const TransitMapScreen({super.key, this.journey});
+
+  final JourneyOption? journey;
 
   @override
   State<TransitMapScreen> createState() => _TransitMapScreenState();
@@ -22,9 +24,15 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   final MapController _mapController = MapController();
   final TextEditingController _searchCtrl = TextEditingController();
   final Location _location = Location();
+  final ValueNotifier<int> _searchVersion = ValueNotifier<int>(0);
+  final RegExp _searchSpaces = RegExp(r'\s+');
 
   StreamSubscription<LocationData>? _locationSubscription;
+  Timer? _searchDebounce;
+  Timer? _mapCameraDebounce;
   LocationData? _currentLocation;
+  LatLngBounds? _visibleMapBounds;
+  double _mapZoom = 11;
 
   bool _loading = true;
   bool _trackingLocation = false;
@@ -36,9 +44,16 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
   TransitStop? _selectedStop;
   TransitRoute? _selectedRoute;
+  JourneyOption? _activeJourney;
+  bool _mapReady = false;
 
   List<TransitStop> _stopSuggestions = [];
   List<TransitRoute> _routeSuggestions = [];
+  List<TransitStop> _allStops = [];
+  List<TransitRoute> _allRoutes = [];
+  final Map<String, List<TransitRoute>> _routesByStopId = {};
+  final Map<String, String> _normalisedStopNames = {};
+  final Map<String, String> _normalisedRouteNames = {};
   bool _showSuggestions = false;
 
   final List<String> _transportModes = const [
@@ -54,12 +69,38 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   @override
   void initState() {
     super.initState();
+    _activeJourney = widget.journey;
     _loadTransitData();
   }
 
   @override
+  void didUpdateWidget(covariant TransitMapScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    final journey = widget.journey;
+    if (journey == null || oldWidget.journey?.id == journey.id) return;
+
+    setState(() {
+      _activeJourney = journey;
+      _selectedStop = null;
+      _selectedRoute = null;
+      _selectedMode = 'All';
+      _followUserLocation = false;
+    });
+
+    if (_mapReady) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusJourney(journey);
+      });
+    }
+  }
+
+  @override
   void dispose() {
+    _searchDebounce?.cancel();
+    _mapCameraDebounce?.cancel();
     _locationSubscription?.cancel();
+    _searchVersion.dispose();
     _searchCtrl.dispose();
     _mapController.dispose();
     super.dispose();
@@ -70,6 +111,26 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       await _repository.load();
 
       if (!mounted) return;
+
+      _allStops = _repository.stops;
+      _allRoutes = _repository.routes;
+      _routesByStopId.clear();
+      _normalisedStopNames.clear();
+      _normalisedRouteNames.clear();
+
+      for (final stop in _allStops) {
+        _normalisedStopNames[stop.id] = _normaliseSearch(stop.name);
+      }
+
+      for (final route in _allRoutes) {
+        _normalisedRouteNames[route.id] = _normaliseSearch(
+          '${route.number} ${route.name}',
+        );
+
+        for (final stopId in route.stopIds) {
+          _routesByStopId.putIfAbsent(stopId, () => []).add(route);
+        }
+      }
 
       setState(() {
         _loading = false;
@@ -86,15 +147,24 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
   List<TransitRoute> get _filteredRoutes {
     if (_selectedMode == 'All') {
-      return _repository.routes;
+      return _allRoutes;
     }
 
-    return _repository.routes.where((route) {
+    return _allRoutes.where((route) {
       return route.mode == _selectedMode;
     }).toList();
   }
 
   List<TransitRoute> get _displayedRoutes {
+    final journey = _activeJourney;
+    if (journey != null) {
+      final routesById = <String, TransitRoute>{};
+      for (final leg in journey.legs) {
+        routesById[leg.route.id] = leg.route;
+      }
+      return routesById.values.toList();
+    }
+
     if (_selectedRoute != null) {
       return [_selectedRoute!];
     }
@@ -103,21 +173,68 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   }
 
   List<TransitStop> get _visibleStops {
+    final journey = _activeJourney;
+    if (journey != null) {
+      final stopsById = <String, TransitStop>{};
+      for (final leg in journey.legs) {
+        for (final stop in leg.stops) {
+          stopsById[stop.id] = stop;
+        }
+      }
+      return stopsById.values.toList();
+    }
+
     final stopIds = _displayedRoutes.expand((route) => route.stopIds).toSet();
 
-    return _repository.stops.where((stop) {
+    return _allStops.where((stop) {
       return stopIds.contains(stop.id);
     }).toList();
   }
 
+  List<TransitStop> get _renderedStops {
+    if (_activeJourney != null) {
+      return _visibleStops;
+    }
+
+    if (_selectedRoute != null) {
+      return _repository.stopsForRoute(_selectedRoute!);
+    }
+
+    final bounds = _visibleMapBounds;
+    if (bounds == null || _mapZoom < 8.5) {
+      return _selectedStop == null ? [] : [_selectedStop!];
+    }
+
+    final maximumMarkers = _mapZoom < 10
+        ? 250
+        : _mapZoom < 12
+        ? 600
+        : 1200;
+    final stops = <TransitStop>[];
+
+    for (final stop in _visibleStops) {
+      if (bounds.contains(LatLng(stop.latitude, stop.longitude))) {
+        stops.add(stop);
+        if (stops.length == maximumMarkers) break;
+      }
+    }
+
+    final selectedStop = _selectedStop;
+    if (selectedStop != null &&
+        !stops.any((stop) => stop.id == selectedStop.id)) {
+      stops.add(selectedStop);
+    }
+
+    return stops;
+  }
+
   List<TransitRoute> _routesForStop(TransitStop stop) {
-    return _repository.routes.where((route) {
-      return route.stopIds.contains(stop.id);
-    }).toList();
+    return _routesByStopId[stop.id] ?? const <TransitRoute>[];
   }
 
   void _selectMode(String mode) {
     setState(() {
+      _activeJourney = null;
       _selectedMode = mode;
       _selectedStop = null;
       _selectedRoute = null;
@@ -139,35 +256,145 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
         );
       }
     }
+
+    if (_searchCtrl.text.trim().length >= 2) {
+      _onSearchChanged(_searchCtrl.text);
+    }
   }
 
   void _onSearchChanged(String value) {
-    final query = value.trim();
+    _searchDebounce?.cancel();
+    final query = _normaliseSearch(value);
 
-    if (query.isEmpty || _loading) {
-      setState(() {
-        _stopSuggestions = [];
-        _routeSuggestions = [];
-        _showSuggestions = false;
-      });
+    if (query.length < 2 || _loading) {
+      _clearSearchSuggestions();
       return;
     }
 
-    final stops = _repository.searchStops(query, limit: 5);
-    final routes = _repository.searchRoutes(query: query, mode: _selectedMode);
-
-    setState(() {
-      _stopSuggestions = stops;
-      _routeSuggestions = routes.take(5).toList();
-      _showSuggestions =
-          _stopSuggestions.isNotEmpty || _routeSuggestions.isNotEmpty;
+    _searchDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (!mounted || _normaliseSearch(_searchCtrl.text) != query) return;
+      _updateSearchSuggestions(query);
     });
+  }
+
+  void _updateSearchSuggestions(String query) {
+    _stopSuggestions = _findStopSuggestions(query);
+    _routeSuggestions = _findRouteSuggestions(query);
+    _showSuggestions =
+        _stopSuggestions.isNotEmpty || _routeSuggestions.isNotEmpty;
+    _searchVersion.value++;
+  }
+
+  List<TransitStop> _findStopSuggestions(String query) {
+    final matches = <TransitStop>[];
+
+    for (final stop in _allStops) {
+      if (_normalisedStopNames[stop.id]!.startsWith(query)) {
+        matches.add(stop);
+        if (matches.length == 5) return matches;
+      }
+    }
+
+    for (final stop in _allStops) {
+      final name = _normalisedStopNames[stop.id]!;
+      if (!name.startsWith(query) && name.contains(query)) {
+        matches.add(stop);
+        if (matches.length == 5) break;
+      }
+    }
+
+    return matches;
+  }
+
+  List<TransitRoute> _findRouteSuggestions(String query) {
+    final matches = <TransitRoute>[];
+
+    for (final route in _allRoutes) {
+      if (_selectedMode != 'All' && route.mode != _selectedMode) continue;
+
+      final name = _normalisedRouteNames[route.id]!;
+      if (name.startsWith(query)) {
+        matches.add(route);
+        if (matches.length == 5) return matches;
+      }
+    }
+
+    for (final route in _allRoutes) {
+      if (_selectedMode != 'All' && route.mode != _selectedMode) continue;
+
+      final name = _normalisedRouteNames[route.id]!;
+      if (!name.startsWith(query) && name.contains(query)) {
+        matches.add(route);
+        if (matches.length == 5) break;
+      }
+    }
+
+    return matches;
+  }
+
+  String _normaliseSearch(String value) {
+    return value.trim().toLowerCase().replaceAll(_searchSpaces, ' ');
+  }
+
+  void _clearSearchSuggestions() {
+    _stopSuggestions = [];
+    _routeSuggestions = [];
+    _showSuggestions = false;
+    _searchVersion.value++;
+  }
+
+  void _onMapReady() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      _mapReady = true;
+      final camera = _mapController.camera;
+      setState(() {
+        _visibleMapBounds = camera.visibleBounds;
+        _mapZoom = camera.zoom;
+      });
+
+      final journey = _activeJourney;
+      if (journey != null) {
+        _focusJourney(journey);
+      }
+    });
+  }
+
+  void _onMapPositionChanged(MapCamera camera, bool hasGesture) {
+    _mapCameraDebounce?.cancel();
+    _mapCameraDebounce = Timer(const Duration(milliseconds: 150), () {
+      if (!mounted) return;
+
+      setState(() {
+        _visibleMapBounds = camera.visibleBounds;
+        _mapZoom = camera.zoom;
+      });
+    });
+  }
+
+  void _focusJourney(JourneyOption journey) {
+    final points = <LatLng>[
+      LatLng(journey.origin.latitude, journey.origin.longitude),
+      for (final leg in journey.legs)
+        for (final stop in leg.stops) LatLng(stop.latitude, stop.longitude),
+      LatLng(journey.destination.latitude, journey.destination.longitude),
+    ];
+
+    _mapController.fitCamera(
+      CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(points),
+        padding: const EdgeInsets.fromLTRB(40, 70, 40, 190),
+        maxZoom: 15,
+      ),
+    );
   }
 
   void _selectStopSuggestion(TransitStop stop) {
     FocusScope.of(context).unfocus();
 
     setState(() {
+      _activeJourney = null;
       _searchCtrl.text = stop.name;
       _selectedStop = stop;
       _selectedRoute = null;
@@ -184,6 +411,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     FocusScope.of(context).unfocus();
 
     setState(() {
+      _activeJourney = null;
       _searchCtrl.text = '${route.mode} ${route.number}';
       _stopSuggestions = [];
       _routeSuggestions = [];
@@ -199,6 +427,9 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
     if (query.isEmpty) return;
 
+    _searchDebounce?.cancel();
+    _updateSearchSuggestions(_normaliseSearch(query));
+
     if (_stopSuggestions.isNotEmpty) {
       _selectStopSuggestion(_stopSuggestions.first);
       return;
@@ -209,28 +440,9 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       return;
     }
 
-    final matchingStops = _repository.searchStops(query, limit: 1);
-
-    if (matchingStops.isNotEmpty) {
-      _selectStopSuggestion(matchingStops.first);
-      return;
-    }
-
-    final matchingRoutes = _repository.searchRoutes(
-      query: query,
-      mode: _selectedMode,
-    );
-
-    if (matchingRoutes.isNotEmpty) {
-      _selectRouteSuggestion(matchingRoutes.first);
-      return;
-    }
-
     FocusScope.of(context).unfocus();
 
-    setState(() {
-      _showSuggestions = false;
-    });
+    _clearSearchSuggestions();
 
     _showMessage('No matching station, stop, or route found.');
   }
@@ -239,6 +451,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     final stops = _repository.stopsForRoute(route);
 
     setState(() {
+      _activeJourney = null;
       _selectedRoute = route;
       _selectedStop = null;
       _selectedMode = route.mode;
@@ -253,6 +466,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
   void _showAllRoutes() {
     setState(() {
+      _activeJourney = null;
       _selectedRoute = null;
       _selectedStop = null;
     });
@@ -403,49 +617,50 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      child: Column(
-        children: [
-          TextField(
-            controller: _searchCtrl,
-            textInputAction: TextInputAction.search,
-            onChanged: _onSearchChanged,
-            onTap: () {
-              if (_searchCtrl.text.trim().isNotEmpty) {
-                _onSearchChanged(_searchCtrl.text);
-              }
-            },
-            onSubmitted: (_) => _search(),
-            decoration: InputDecoration(
-              hintText: 'Search station, stop, or route',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_searchCtrl.text.isNotEmpty)
-                    IconButton(
-                      tooltip: 'Clear',
-                      onPressed: () {
-                        _searchCtrl.clear();
-
-                        setState(() {
-                          _stopSuggestions = [];
-                          _routeSuggestions = [];
-                          _showSuggestions = false;
-                        });
-                      },
-                      icon: const Icon(Icons.close),
-                    ),
-                  IconButton(
-                    tooltip: 'Search',
-                    onPressed: _search,
-                    icon: const Icon(Icons.arrow_forward),
+      child: ValueListenableBuilder<int>(
+        valueListenable: _searchVersion,
+        builder: (context, version, child) {
+          return Column(
+            children: [
+              TextField(
+                controller: _searchCtrl,
+                textInputAction: TextInputAction.search,
+                onChanged: _onSearchChanged,
+                onTap: () {
+                  if (_searchCtrl.text.trim().length >= 2) {
+                    _onSearchChanged(_searchCtrl.text);
+                  }
+                },
+                onSubmitted: (_) => _search(),
+                decoration: InputDecoration(
+                  hintText: 'Search station, stop, or route',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_searchCtrl.text.isNotEmpty)
+                        IconButton(
+                          tooltip: 'Clear',
+                          onPressed: () {
+                            _searchDebounce?.cancel();
+                            _searchCtrl.clear();
+                            _clearSearchSuggestions();
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                      IconButton(
+                        tooltip: 'Search',
+                        onPressed: _search,
+                        icon: const Icon(Icons.arrow_forward),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
-          ),
-          if (_showSuggestions) _buildSearchSuggestions(),
-        ],
+              if (_showSuggestions) _buildSearchSuggestions(),
+            ],
+          );
+        },
       ),
     );
   }
@@ -589,11 +804,13 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       children: [
         FlutterMap(
           mapController: _mapController,
-          options: const MapOptions(
-            initialCenter: LatLng(5.4145, 100.3292),
+          options: MapOptions(
+            initialCenter: const LatLng(5.4145, 100.3292),
             initialZoom: 11,
             minZoom: 5,
             maxZoom: 19,
+            onMapReady: _onMapReady,
+            onPositionChanged: _onMapPositionChanged,
           ),
           children: [
             TileLayer(
@@ -603,7 +820,8 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
               maxZoom: 19,
             ),
             PolylineLayer(polylines: _buildRoutePolylines()),
-            MarkerLayer(markers: _visibleStops.map(_buildStopMarker).toList()),
+            MarkerLayer(markers: _renderedStops.map(_buildStopMarker).toList()),
+            MarkerLayer(markers: _buildJourneyEndpointMarkers()),
             MarkerLayer(markers: _buildCurrentLocationMarkers()),
             const Align(
               alignment: Alignment.topRight,
@@ -701,11 +919,33 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
             bottom: 12,
             child: _buildRouteInformation(_selectedRoute!),
           ),
+        if (_selectedStop == null &&
+            _selectedRoute == null &&
+            _activeJourney != null)
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 12,
+            child: _buildJourneyInformation(_activeJourney!),
+          ),
       ],
     );
   }
 
   List<Polyline> _buildRoutePolylines() {
+    final journey = _activeJourney;
+    if (journey != null) {
+      return journey.legs.map((leg) {
+        return Polyline(
+          points: leg.stops.map((stop) {
+            return LatLng(stop.latitude, stop.longitude);
+          }).toList(),
+          color: _routeColour(leg.route.colourHex),
+          strokeWidth: 6,
+        );
+      }).toList();
+    }
+
     return _displayedRoutes.map((route) {
       final stops = _repository.stopsForRoute(route);
 
@@ -767,6 +1007,57 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     );
   }
 
+  List<Marker> _buildJourneyEndpointMarkers() {
+    final journey = _activeJourney;
+    if (journey == null) return [];
+
+    return [
+      _buildJourneyEndpointMarker(
+        location: journey.origin,
+        label: 'Start: ${journey.origin.name}',
+        icon: Icons.trip_origin,
+        colour: Colors.green,
+      ),
+      _buildJourneyEndpointMarker(
+        location: journey.destination,
+        label: 'Destination: ${journey.destination.name}',
+        icon: Icons.flag,
+        colour: Colors.red,
+      ),
+    ];
+  }
+
+  Marker _buildJourneyEndpointMarker({
+    required JourneyLocation location,
+    required String label,
+    required IconData icon,
+    required Color colour,
+  }) {
+    return Marker(
+      point: LatLng(location.latitude, location.longitude),
+      width: 54,
+      height: 54,
+      child: Tooltip(
+        message: label,
+        child: Container(
+          decoration: BoxDecoration(
+            color: colour,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 3),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black26,
+                blurRadius: 6,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Icon(icon, color: Colors.white, size: 27),
+        ),
+      ),
+    );
+  }
+
   List<Marker> _buildCurrentLocationMarkers() {
     final latitude = _currentLocation?.latitude;
     final longitude = _currentLocation?.longitude;
@@ -787,6 +1078,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
   Widget _buildMapStatus() {
     final route = _selectedRoute;
+    final journey = _activeJourney;
 
     return Container(
       constraints: const BoxConstraints(maxWidth: 230),
@@ -802,6 +1094,8 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
           Icon(
             _trackingLocation
                 ? Icons.gps_fixed
+                : journey != null
+                ? Icons.navigation
                 : route == null
                 ? Icons.map_outlined
                 : Icons.route,
@@ -813,8 +1107,12 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
             child: Text(
               _trackingLocation
                   ? 'Live location active'
+                  : journey != null
+                  ? 'Journey ${journey.routeSummary}'
                   : route == null
-                  ? '${_visibleStops.length} supported stops'
+                  ? _mapZoom < 8.5
+                        ? 'Zoom in to view stops'
+                        : '${_renderedStops.length} nearby stops'
                   : 'Route ${route.number}',
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
@@ -842,6 +1140,108 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
           color: onPressed == null
               ? AppTheme.secondaryText
               : AppTheme.primaryBlue,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildJourneyInformation(JourneyOption journey) {
+    return Card(
+      elevation: 8,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryBlue.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.navigation,
+                    color: AppTheme.primaryBlue,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${journey.origin.name} to ${journey.destination.name}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppTheme.mainText,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        journey.routeSummary,
+                        style: const TextStyle(color: AppTheme.secondaryText),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close journey',
+                  onPressed: () {
+                    setState(() {
+                      _activeJourney = null;
+                    });
+                  },
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildRouteSummary(
+                    'Duration',
+                    '${journey.totalDurationMinutes} min',
+                    Icons.schedule,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildRouteSummary(
+                    'Fare',
+                    'RM${journey.totalFare.toStringAsFixed(2)}',
+                    Icons.payments_outlined,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildRouteSummary(
+                    'Transfers',
+                    '${journey.transferCount}',
+                    Icons.transfer_within_a_station,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _focusJourney(journey),
+                icon: const Icon(Icons.center_focus_strong),
+                label: const Text('Show Entire Journey'),
+              ),
+            ),
+          ],
         ),
       ),
     );
