@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../data/location_service.dart';
 import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
 
@@ -26,11 +27,27 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
   LatLng? _selectedPoint;
   String? _selectedName;
 
+  List<TransitStop> get _mapStops {
+    const maximumMarkers = 500;
+    if (widget.stops.length <= maximumMarkers) return widget.stops;
+
+    final step = (widget.stops.length / maximumMarkers).ceil();
+    final visibleStops = <TransitStop>[];
+    for (var index = 0; index < widget.stops.length; index += step) {
+      visibleStops.add(widget.stops[index]);
+    }
+    return visibleStops;
+  }
+
   @override
   void initState() {
     super.initState();
     final initialLocation = widget.initialLocation;
-    if (initialLocation != null) {
+    if (initialLocation != null &&
+        LocationService.isInsideMalaysia(
+          initialLocation.latitude,
+          initialLocation.longitude,
+        )) {
       _selectedPoint = LatLng(
         initialLocation.latitude,
         initialLocation.longitude,
@@ -40,6 +57,17 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
   }
 
   void _selectPoint(LatLng point, {String? name}) {
+    if (!LocationService.isInsideMalaysia(
+      point.latitude,
+      point.longitude,
+    )) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a location inside Malaysia.'),
+        ),
+      );
+      return;
+    }
     setState(() {
       _selectedPoint = point;
       _selectedName = name;
@@ -82,9 +110,16 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
 
   @override
   Widget build(BuildContext context) {
-    final initialLocation = widget.initialLocation;
+    final suppliedInitialLocation = widget.initialLocation;
+    final initialLocation = suppliedInitialLocation != null &&
+            LocationService.isInsideMalaysia(
+              suppliedInitialLocation.latitude,
+              suppliedInitialLocation.longitude,
+            )
+        ? suppliedInitialLocation
+        : null;
     final initialCentre = initialLocation == null
-        ? const LatLng(4.2, 102.0)
+        ? const LatLng(5.4141, 100.3288)
         : LatLng(initialLocation.latitude, initialLocation.longitude);
     final selectedPoint = _selectedPoint;
     final nearestStop =
@@ -133,7 +168,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
                   FlutterMap(
                     options: MapOptions(
                       initialCenter: initialCentre,
-                      initialZoom: initialLocation == null ? 6 : 14,
+                      initialZoom: initialLocation == null ? 11 : 14,
                       onTap: (_, point) => _selectPoint(point),
                     ),
                     children: [
@@ -146,7 +181,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
                       ),
                       MarkerLayer(
                         markers: [
-                          for (final stop in widget.stops)
+                          for (final stop in _mapStops)
                             Marker(
                               width: 38,
                               height: 38,

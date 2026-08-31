@@ -11,6 +11,9 @@ class TransitRepository {
   static final TransitRepository instance = TransitRepository._();
 
   final Map<String, TransitStop> _stopsById = {};
+  final Map<String, TransitRoute> _routesById = {};
+  final Map<String, List<TransitRoute>> _routesByStopId = {};
+  final Map<String, Set<String>> _connectedRouteIds = {};
   final List<TransitRoute> _routes = [];
 
   bool _loaded = false;
@@ -36,7 +39,24 @@ class TransitRepository {
     }
 
     for (final item in data['routes'] as List<dynamic>) {
-      _routes.add(TransitRoute.fromJson(item as Map<String, dynamic>));
+      final route = TransitRoute.fromJson(item as Map<String, dynamic>);
+      _routes.add(route);
+      _routesById[route.id] = route;
+      for (final stopId in route.stopIds) {
+        _routesByStopId.putIfAbsent(stopId, () => []).add(route);
+      }
+    }
+
+    for (final routesAtStop in _routesByStopId.values) {
+      for (final route in routesAtStop) {
+        final connections = _connectedRouteIds.putIfAbsent(
+          route.id,
+          () => <String>{},
+        );
+        for (final otherRoute in routesAtStop) {
+          if (otherRoute.id != route.id) connections.add(otherRoute.id);
+        }
+      }
     }
 
     _loaded = true;
@@ -145,6 +165,7 @@ class TransitRepository {
       return selectedModes.contains(route.mode) &&
           (!accessibleOnly || route.accessible);
     }).toList();
+    final allowedRouteIds = allowedRoutes.map((route) => route.id).toSet();
 
     final drafts = <_JourneyDraft>[];
 
@@ -154,7 +175,14 @@ class TransitRepository {
         final alightingStop = destinationCandidate.stop;
         if (boardingStop.id == alightingStop.id) continue;
 
-        for (final route in allowedRoutes) {
+        final firstRoutes = (_routesByStopId[boardingStop.id] ?? [])
+            .where((route) => allowedRouteIds.contains(route.id))
+            .toList();
+        final finalRoutes = (_routesByStopId[alightingStop.id] ?? [])
+            .where((route) => allowedRouteIds.contains(route.id))
+            .toList();
+
+        for (final route in firstRoutes) {
           final leg = _createLeg(route, boardingStop, alightingStop);
           if (leg == null) continue;
           drafts.add(
@@ -170,12 +198,11 @@ class TransitRepository {
           );
         }
 
-        for (final firstRoute in allowedRoutes) {
-          if (!firstRoute.stopIds.contains(boardingStop.id)) continue;
-
-          for (final secondRoute in allowedRoutes) {
+        for (final firstRoute in firstRoutes) {
+          for (final secondRoute in finalRoutes) {
             if (firstRoute.id == secondRoute.id ||
-                !secondRoute.stopIds.contains(alightingStop.id)) {
+                !(_connectedRouteIds[firstRoute.id] ?? const <String>{})
+                    .contains(secondRoute.id)) {
               continue;
             }
 
@@ -213,6 +240,84 @@ class TransitRepository {
                       transferWalkingMetres,
                 ),
               );
+            }
+          }
+        }
+
+        // Also allow two transfers, for example Bus -> KTM -> MRT/LRT.
+        for (final firstRoute in firstRoutes) {
+          final middleRouteIds =
+              _connectedRouteIds[firstRoute.id] ?? const <String>{};
+          for (final middleRouteId in middleRouteIds) {
+            if (!allowedRouteIds.contains(middleRouteId)) continue;
+            final middleRoute = _routesById[middleRouteId];
+            if (middleRoute == null) continue;
+
+            for (final finalRoute in finalRoutes) {
+              if (finalRoute.id == firstRoute.id ||
+                  finalRoute.id == middleRoute.id ||
+                  !(_connectedRouteIds[middleRoute.id] ?? const <String>{})
+                      .contains(finalRoute.id)) {
+                continue;
+              }
+
+              final firstTransferIds = firstRoute.stopIds
+                  .where(middleRoute.stopIds.contains)
+                  .where(
+                    (id) => id != boardingStop.id && id != alightingStop.id,
+                  )
+                  .take(2);
+              final secondTransferIds = middleRoute.stopIds
+                  .where(finalRoute.stopIds.contains)
+                  .where(
+                    (id) => id != boardingStop.id && id != alightingStop.id,
+                  )
+                  .take(2)
+                  .toList();
+
+              for (final firstTransferId in firstTransferIds) {
+                for (final secondTransferId in secondTransferIds) {
+                  if (firstTransferId == secondTransferId) continue;
+                  final firstTransfer = _stopsById[firstTransferId]!;
+                  final secondTransfer = _stopsById[secondTransferId]!;
+                  final firstLeg = _createLeg(
+                    firstRoute,
+                    boardingStop,
+                    firstTransfer,
+                  );
+                  final middleLeg = _createLeg(
+                    middleRoute,
+                    firstTransfer,
+                    secondTransfer,
+                  );
+                  final finalLeg = _createLeg(
+                    finalRoute,
+                    secondTransfer,
+                    alightingStop,
+                  );
+                  if (firstLeg == null ||
+                      middleLeg == null ||
+                      finalLeg == null) {
+                    continue;
+                  }
+
+                  drafts.add(
+                    _JourneyDraft(
+                      id: '${firstRoute.id}:${middleRoute.id}:'
+                          '${finalRoute.id}:$firstTransferId:'
+                          '$secondTransferId:${boardingStop.id}:'
+                          '${alightingStop.id}',
+                      legs: [firstLeg, middleLeg, finalLeg],
+                      originWalkingMetres: originCandidate.distanceMetres,
+                      destinationWalkingMetres:
+                          destinationCandidate.distanceMetres,
+                      walkingMetres: originCandidate.distanceMetres +
+                          destinationCandidate.distanceMetres +
+                          240,
+                    ),
+                  );
+                }
+              }
             }
           }
         }
@@ -351,7 +456,7 @@ class TransitRepository {
     candidates.sort(
       (a, b) => a.distanceMetres.compareTo(b.distanceMetres),
     );
-    return candidates;
+    return candidates.take(6).toList();
   }
 
   double _distanceBetween(

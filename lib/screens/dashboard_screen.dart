@@ -188,6 +188,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return;
       }
 
+      if (!LocationService.isInsideMalaysia(latitude, longitude)) {
+        if (mounted) {
+          _showMessage(
+            'The emulator GPS is outside Malaysia. Open Emulator Extended '
+            'Controls > Location and set a Penang location, for example '
+            '5.4141, 100.3288, or test with a real phone.',
+          );
+        }
+        return;
+      }
+
       if (!mounted) return;
       final gpsLocation = JourneyLocation(
         name: 'Current location',
