@@ -1,4 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:location/location.dart';
+import 'package:permission_handler/permission_handler.dart' as handler;
+
+import '../data/transit_repository.dart';
+import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
 
 class TransitMapScreen extends StatefulWidget {
@@ -9,67 +18,374 @@ class TransitMapScreen extends StatefulWidget {
 }
 
 class _TransitMapScreenState extends State<TransitMapScreen> {
+  final TransitRepository _repository = TransitRepository.instance;
+  final MapController _mapController = MapController();
+  final TextEditingController _searchCtrl = TextEditingController();
+  final Location _location = Location();
+
+  StreamSubscription<LocationData>? _locationSubscription;
+  LocationData? _currentLocation;
+
+  bool _loading = true;
+  bool _trackingLocation = false;
+  bool _requestingLocation = false;
+  bool _followUserLocation = true;
+
+  String? _error;
   String _selectedMode = 'All';
-  TransitVehicle? _selectedVehicle;
 
-  final List<String> _transportModes = ['All', 'Bus', 'Train', 'Ferry'];
+  TransitStop? _selectedStop;
+  TransitRoute? _selectedRoute;
 
-  final List<TransitVehicle> _vehicles = const [
-    TransitVehicle(
-      name: 'Rapid Penang 101',
-      type: 'Bus',
-      location: 'Near KOMTAR Bus Terminal',
-      arrivalTime: '3 min',
-      status: 'On time',
-      alignment: Alignment(-0.65, -0.45),
-      icon: Icons.directions_bus,
-      colour: AppTheme.primaryBlue,
-    ),
-    TransitVehicle(
-      name: 'Rapid Penang 204',
-      type: 'Bus',
-      location: 'Near Jalan Macalister',
-      arrivalTime: '6 min',
-      status: 'Slight delay',
-      alignment: Alignment(0.55, -0.10),
-      icon: Icons.directions_bus,
-      colour: Color(0xFFF57C00),
-    ),
-    TransitVehicle(
-      name: 'KTM Komuter 2944',
-      type: 'Train',
-      location: 'Butterworth Railway Station',
-      arrivalTime: '8 min',
-      status: 'On time',
-      alignment: Alignment(-0.20, 0.40),
-      icon: Icons.train,
-      colour: Color(0xFF7B1FA2),
-    ),
-    TransitVehicle(
-      name: 'Penang Ferry',
-      type: 'Ferry',
-      location: 'Raja Tun Uda Ferry Terminal',
-      arrivalTime: '5 min',
-      status: 'Boarding soon',
-      alignment: Alignment(0.60, 0.52),
-      icon: Icons.directions_boat,
-      colour: Color(0xFF00897B),
-    ),
+  List<TransitStop> _stopSuggestions = [];
+  List<TransitRoute> _routeSuggestions = [];
+  bool _showSuggestions = false;
+
+  final List<String> _transportModes = const [
+    'All',
+    'Bus',
+    'Ferry',
+    'KTM',
+    'MRT',
+    'LRT',
+    'Monorail',
   ];
 
-  List<TransitVehicle> get _filteredVehicles {
+  @override
+  void initState() {
+    super.initState();
+    _loadTransitData();
+  }
+
+  @override
+  void dispose() {
+    _locationSubscription?.cancel();
+    _searchCtrl.dispose();
+    _mapController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadTransitData() async {
+    try {
+      await _repository.load();
+
+      if (!mounted) return;
+
+      setState(() {
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _error = error.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  List<TransitRoute> get _filteredRoutes {
     if (_selectedMode == 'All') {
-      return _vehicles;
+      return _repository.routes;
     }
 
-    return _vehicles.where((vehicle) => vehicle.type == _selectedMode).toList();
+    return _repository.routes.where((route) {
+      return route.mode == _selectedMode;
+    }).toList();
+  }
+
+  List<TransitRoute> get _displayedRoutes {
+    if (_selectedRoute != null) {
+      return [_selectedRoute!];
+    }
+
+    return _filteredRoutes;
+  }
+
+  List<TransitStop> get _visibleStops {
+    final stopIds = _displayedRoutes.expand((route) => route.stopIds).toSet();
+
+    return _repository.stops.where((stop) {
+      return stopIds.contains(stop.id);
+    }).toList();
+  }
+
+  List<TransitRoute> _routesForStop(TransitStop stop) {
+    return _repository.routes.where((route) {
+      return route.stopIds.contains(stop.id);
+    }).toList();
   }
 
   void _selectMode(String mode) {
     setState(() {
       _selectedMode = mode;
-      _selectedVehicle = null;
+      _selectedStop = null;
+      _selectedRoute = null;
     });
+
+    final routes = _filteredRoutes;
+
+    if (mode == 'All') {
+      _mapController.move(const LatLng(4.20, 101.50), 6);
+    } else if (routes.isNotEmpty) {
+      final stops = _repository.stopsForRoute(routes.first);
+
+      if (stops.isNotEmpty) {
+        final firstStop = stops.first;
+
+        _mapController.move(
+          LatLng(firstStop.latitude, firstStop.longitude),
+          10,
+        );
+      }
+    }
+  }
+
+  void _onSearchChanged(String value) {
+    final query = value.trim();
+
+    if (query.isEmpty || _loading) {
+      setState(() {
+        _stopSuggestions = [];
+        _routeSuggestions = [];
+        _showSuggestions = false;
+      });
+      return;
+    }
+
+    final stops = _repository.searchStops(query, limit: 5);
+    final routes = _repository.searchRoutes(query: query, mode: _selectedMode);
+
+    setState(() {
+      _stopSuggestions = stops;
+      _routeSuggestions = routes.take(5).toList();
+      _showSuggestions =
+          _stopSuggestions.isNotEmpty || _routeSuggestions.isNotEmpty;
+    });
+  }
+
+  void _selectStopSuggestion(TransitStop stop) {
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _searchCtrl.text = stop.name;
+      _selectedStop = stop;
+      _selectedRoute = null;
+      _stopSuggestions = [];
+      _routeSuggestions = [];
+      _showSuggestions = false;
+      _followUserLocation = false;
+    });
+
+    _mapController.move(LatLng(stop.latitude, stop.longitude), 14);
+  }
+
+  void _selectRouteSuggestion(TransitRoute route) {
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _searchCtrl.text = '${route.mode} ${route.number}';
+      _stopSuggestions = [];
+      _routeSuggestions = [];
+      _showSuggestions = false;
+      _followUserLocation = false;
+    });
+
+    _showRoute(route);
+  }
+
+  void _search() {
+    final query = _searchCtrl.text.trim();
+
+    if (query.isEmpty) return;
+
+    if (_stopSuggestions.isNotEmpty) {
+      _selectStopSuggestion(_stopSuggestions.first);
+      return;
+    }
+
+    if (_routeSuggestions.isNotEmpty) {
+      _selectRouteSuggestion(_routeSuggestions.first);
+      return;
+    }
+
+    final matchingStops = _repository.searchStops(query, limit: 1);
+
+    if (matchingStops.isNotEmpty) {
+      _selectStopSuggestion(matchingStops.first);
+      return;
+    }
+
+    final matchingRoutes = _repository.searchRoutes(
+      query: query,
+      mode: _selectedMode,
+    );
+
+    if (matchingRoutes.isNotEmpty) {
+      _selectRouteSuggestion(matchingRoutes.first);
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _showSuggestions = false;
+    });
+
+    _showMessage('No matching station, stop, or route found.');
+  }
+
+  void _showRoute(TransitRoute route) {
+    final stops = _repository.stopsForRoute(route);
+
+    setState(() {
+      _selectedRoute = route;
+      _selectedStop = null;
+      _selectedMode = route.mode;
+    });
+
+    if (stops.isNotEmpty) {
+      final firstStop = stops.first;
+
+      _mapController.move(LatLng(firstStop.latitude, firstStop.longitude), 11);
+    }
+  }
+
+  void _showAllRoutes() {
+    setState(() {
+      _selectedRoute = null;
+      _selectedStop = null;
+    });
+  }
+
+  Future<bool> _prepareLocationService() async {
+    final permissionStatus = await handler.Permission.locationWhenInUse
+        .request();
+
+    if (permissionStatus != handler.PermissionStatus.granted) {
+      if (mounted) {
+        _showMessage('Location permission was not granted.');
+      }
+
+      return false;
+    }
+
+    var serviceEnabled = await _location.serviceEnabled();
+
+    if (!serviceEnabled) {
+      serviceEnabled = await _location.requestService();
+    }
+
+    if (!serviceEnabled) {
+      if (mounted) {
+        _showMessage('Please enable GPS to use live tracking.');
+      }
+
+      return false;
+    }
+
+    return true;
+  }
+
+  Future<void> _startLocationTracking() async {
+    if (_trackingLocation || _requestingLocation) return;
+
+    setState(() {
+      _requestingLocation = true;
+    });
+
+    try {
+      final ready = await _prepareLocationService();
+
+      if (!ready || !mounted) return;
+
+      await _location.changeSettings(
+        accuracy: LocationAccuracy.high,
+        interval: 1000,
+        distanceFilter: 5,
+      );
+
+      final firstLocation = await _location.getLocation();
+
+      if (!mounted) return;
+
+      _updateCurrentLocation(firstLocation);
+
+      await _locationSubscription?.cancel();
+
+      _locationSubscription = _location.onLocationChanged.listen(
+        _updateCurrentLocation,
+        onError: (Object error) {
+          if (mounted) {
+            _showMessage('Location tracking error: $error');
+          }
+        },
+      );
+
+      setState(() {
+        _trackingLocation = true;
+        _followUserLocation = true;
+      });
+
+      _showMessage('Live location tracking started.');
+    } catch (error) {
+      if (mounted) {
+        _showMessage('Unable to start location tracking: $error');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _requestingLocation = false;
+        });
+      }
+    }
+  }
+
+  void _updateCurrentLocation(LocationData location) {
+    if (!mounted) return;
+
+    final latitude = location.latitude;
+    final longitude = location.longitude;
+
+    if (latitude == null || longitude == null) return;
+
+    setState(() {
+      _currentLocation = location;
+    });
+
+    if (_followUserLocation) {
+      _mapController.move(LatLng(latitude, longitude), 15);
+    }
+  }
+
+  Future<void> _stopLocationTracking() async {
+    await _locationSubscription?.cancel();
+    _locationSubscription = null;
+
+    if (!mounted) return;
+
+    setState(() {
+      _trackingLocation = false;
+      _followUserLocation = false;
+    });
+
+    _showMessage('Live location tracking stopped.');
+  }
+
+  void _moveToCurrentLocation() {
+    final latitude = _currentLocation?.latitude;
+    final longitude = _currentLocation?.longitude;
+
+    if (latitude == null || longitude == null) {
+      _startLocationTracking();
+      return;
+    }
+
+    setState(() {
+      _followUserLocation = true;
+    });
+
+    _mapController.move(LatLng(latitude, longitude), 15);
   }
 
   @override
@@ -87,22 +403,110 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      child: TextField(
-        decoration: InputDecoration(
-          hintText: 'Search station, stop or route',
-          prefixIcon: const Icon(Icons.search),
-          suffixIcon: IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.mic_none),
+      child: Column(
+        children: [
+          TextField(
+            controller: _searchCtrl,
+            textInputAction: TextInputAction.search,
+            onChanged: _onSearchChanged,
+            onTap: () {
+              if (_searchCtrl.text.trim().isNotEmpty) {
+                _onSearchChanged(_searchCtrl.text);
+              }
+            },
+            onSubmitted: (_) => _search(),
+            decoration: InputDecoration(
+              hintText: 'Search station, stop, or route',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_searchCtrl.text.isNotEmpty)
+                    IconButton(
+                      tooltip: 'Clear',
+                      onPressed: () {
+                        _searchCtrl.clear();
+
+                        setState(() {
+                          _stopSuggestions = [];
+                          _routeSuggestions = [];
+                          _showSuggestions = false;
+                        });
+                      },
+                      icon: const Icon(Icons.close),
+                    ),
+                  IconButton(
+                    tooltip: 'Search',
+                    onPressed: _search,
+                    icon: const Icon(Icons.arrow_forward),
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
-        onSubmitted: (value) {
-          if (value.trim().isNotEmpty) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Searching for "$value"')));
-          }
-        },
+          if (_showSuggestions) _buildSearchSuggestions(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchSuggestions() {
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 300),
+      margin: const EdgeInsets.only(top: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: const [
+          BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 4)),
+        ],
+      ),
+      child: ListView(
+        shrinkWrap: true,
+        padding: EdgeInsets.zero,
+        children: [
+          ..._stopSuggestions.map((stop) {
+            final routes = _routesForStop(stop);
+            final modes = routes.map((route) => route.mode).toSet();
+            final routeNumbers = routes.map((route) => route.number).join(', ');
+
+            return ListTile(
+              leading: Icon(
+                _iconForModes(modes),
+                color: _colourForModes(modes),
+              ),
+              title: Text(
+                stop.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                routeNumbers.isEmpty
+                    ? _stationType(modes)
+                    : '${_stationType(modes)} · Routes $routeNumbers',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              onTap: () => _selectStopSuggestion(stop),
+            );
+          }),
+          ..._routeSuggestions.map((route) {
+            return ListTile(
+              leading: Icon(
+                _iconForMode(route.mode),
+                color: _routeColour(route.colourHex),
+              ),
+              title: Text('${route.mode} ${route.number}'),
+              subtitle: Text(
+                route.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              onTap: () => _selectRouteSuggestion(route),
+            );
+          }),
+        ],
       ),
     );
   }
@@ -116,7 +520,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
         scrollDirection: Axis.horizontal,
         child: Row(
           children: _transportModes.map((mode) {
-            final bool isSelected = _selectedMode == mode;
+            final isSelected = _selectedMode == mode;
 
             return Padding(
               padding: const EdgeInsets.only(right: 8),
@@ -134,9 +538,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
                       : AppTheme.secondaryText,
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
                 ),
-                onSelected: (_) {
-                  _selectMode(mode);
-                },
+                onSelected: (_) => _selectMode(mode),
               ),
             );
           }).toList(),
@@ -146,196 +548,396 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   }
 
   Widget _buildMapSection() {
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: Container(
-            color: const Color(0xFFEAF2F8),
-            child: CustomPaint(painter: TransitMapPainter()),
-          ),
-        ),
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-        // Live status label
-        Positioned(
-          left: 16,
-          top: 16,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.10), blurRadius: 8),
-              ],
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.circle, size: 10, color: Color(0xFF2E7D32)),
-                SizedBox(width: 7),
-                Text(
-                  'Live tracking',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.mainText,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        // Map control buttons
-        Positioned(
-          right: 16,
-          top: 16,
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              _buildMapControlButton(
-                icon: Icons.layers_outlined,
-                onPressed: () {
-                  _showMessage('Map layers selected');
-                },
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 12),
+              const Text(
+                'Unable to load transit data',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 10),
-              _buildMapControlButton(
-                icon: Icons.my_location,
+              const SizedBox(height: 8),
+              Text(_error!, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              FilledButton(
                 onPressed: () {
-                  _showMessage('Showing your current location');
+                  setState(() {
+                    _loading = true;
+                    _error = null;
+                  });
+
+                  _loadTransitData();
                 },
-              ),
-              const SizedBox(height: 10),
-              _buildMapControlButton(
-                icon: Icons.refresh,
-                onPressed: () {
-                  _showMessage('Live vehicle locations refreshed');
-                },
+                child: const Text('Try Again'),
               ),
             ],
           ),
         ),
+      );
+    }
 
-        // Transport vehicle markers
-        ..._filteredVehicles.map(_buildVehicleMarker),
-
-        // User's current location
-        const Align(
-          alignment: Alignment(0.25, 0.15),
-          child: CurrentLocationMarker(),
-        ),
-
-        // Instruction shown before selecting a vehicle
-        if (_selectedVehicle == null)
-          Positioned(
-            left: 16,
-            right: 16,
-            bottom: 16,
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.12),
-                    blurRadius: 12,
-                  ),
-                ],
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.touch_app_outlined, color: AppTheme.primaryBlue),
-                  SizedBox(width: 12),
-                  Expanded(
+    return Stack(
+      children: [
+        FlutterMap(
+          mapController: _mapController,
+          options: const MapOptions(
+            initialCenter: LatLng(5.4145, 100.3292),
+            initialZoom: 11,
+            minZoom: 5,
+            maxZoom: 19,
+          ),
+          children: [
+            TileLayer(
+              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              userAgentPackageName:
+                  'my.edu.tarumt.smart_tublic_transport_system',
+              maxZoom: 19,
+            ),
+            PolylineLayer(polylines: _buildRoutePolylines()),
+            MarkerLayer(markers: _visibleStops.map(_buildStopMarker).toList()),
+            MarkerLayer(markers: _buildCurrentLocationMarkers()),
+            const Align(
+              alignment: Alignment.topRight,
+              child: Padding(
+                padding: EdgeInsets.all(4),
+                child: ColoredBox(
+                  color: Colors.white70,
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 5, vertical: 3),
                     child: Text(
-                      'Select a vehicle marker to view its live information.',
-                      style: TextStyle(color: AppTheme.mainText, fontSize: 13),
+                      '© OpenStreetMap contributors',
+                      style: TextStyle(fontSize: 9),
                     ),
                   ),
-                ],
+                ),
               ),
             ),
-          ),
+          ],
+        ),
+        Positioned(left: 12, top: 12, child: _buildMapStatus()),
+        Positioned(
+          right: 12,
+          top: 42,
+          child: Column(
+            children: [
+              _buildMapControlButton(
+                tooltip: 'Show Penang',
+                icon: Icons.location_city,
+                onPressed: () {
+                  setState(() {
+                    _followUserLocation = false;
+                  });
 
-        // Selected vehicle information
-        if (_selectedVehicle != null)
+                  _mapController.move(const LatLng(5.4145, 100.3292), 11);
+                },
+              ),
+              const SizedBox(height: 8),
+              _buildMapControlButton(
+                tooltip: 'Show Malaysia',
+                icon: Icons.public,
+                onPressed: () {
+                  setState(() {
+                    _followUserLocation = false;
+                  });
+
+                  _mapController.move(const LatLng(4.20, 101.50), 6);
+                },
+              ),
+              const SizedBox(height: 8),
+              _buildMapControlButton(
+                tooltip: _trackingLocation
+                    ? 'Stop live tracking'
+                    : 'Start live tracking',
+                icon: _requestingLocation
+                    ? Icons.hourglass_top
+                    : _trackingLocation
+                    ? Icons.location_off
+                    : Icons.my_location,
+                onPressed: _requestingLocation
+                    ? null
+                    : _trackingLocation
+                    ? _stopLocationTracking
+                    : _startLocationTracking,
+              ),
+              if (_currentLocation != null) ...[
+                const SizedBox(height: 8),
+                _buildMapControlButton(
+                  tooltip: 'Move to my location',
+                  icon: Icons.gps_fixed,
+                  onPressed: _moveToCurrentLocation,
+                ),
+              ],
+              if (_selectedRoute != null) ...[
+                const SizedBox(height: 8),
+                _buildMapControlButton(
+                  tooltip: 'Show all routes',
+                  icon: Icons.layers_outlined,
+                  onPressed: _showAllRoutes,
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (_selectedStop != null)
           Positioned(
-            left: 16,
-            right: 16,
-            bottom: 16,
-            child: _buildVehicleInformationCard(_selectedVehicle!),
+            left: 12,
+            right: 12,
+            bottom: 12,
+            child: _buildStopInformation(_selectedStop!),
+          ),
+        if (_selectedStop == null && _selectedRoute != null)
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 12,
+            child: _buildRouteInformation(_selectedRoute!),
           ),
       ],
     );
   }
 
+  List<Polyline> _buildRoutePolylines() {
+    return _displayedRoutes.map((route) {
+      final stops = _repository.stopsForRoute(route);
+
+      return Polyline(
+        points: stops.map((stop) {
+          return LatLng(stop.latitude, stop.longitude);
+        }).toList(),
+        color: _routeColour(
+          route.colourHex,
+        ).withOpacity(_selectedRoute == null ? 0.65 : 1),
+        strokeWidth: _selectedRoute == null ? 4 : 6,
+      );
+    }).toList();
+  }
+
+  Marker _buildStopMarker(TransitStop stop) {
+    final routes = _routesForStop(stop);
+    final modes = routes.map((route) => route.mode).toSet();
+    final isSelected = _selectedStop?.id == stop.id;
+
+    return Marker(
+      point: LatLng(stop.latitude, stop.longitude),
+      width: 52,
+      height: 52,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          setState(() {
+            _selectedStop = stop;
+            _followUserLocation = false;
+          });
+        },
+        child: Tooltip(
+          message: stop.name,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: isSelected ? Colors.red : _colourForModes(modes),
+                width: isSelected ? 4 : 3,
+              ),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 5,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Icon(
+              _iconForModes(modes),
+              size: isSelected ? 30 : 26,
+              color: isSelected ? Colors.red : _colourForModes(modes),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Marker> _buildCurrentLocationMarkers() {
+    final latitude = _currentLocation?.latitude;
+    final longitude = _currentLocation?.longitude;
+
+    if (latitude == null || longitude == null) {
+      return [];
+    }
+
+    return [
+      Marker(
+        point: LatLng(latitude, longitude),
+        width: 48,
+        height: 48,
+        child: const CurrentUserLocationMarker(),
+      ),
+    ];
+  }
+
+  Widget _buildMapStatus() {
+    final route = _selectedRoute;
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 230),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8)],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            _trackingLocation
+                ? Icons.gps_fixed
+                : route == null
+                ? Icons.map_outlined
+                : Icons.route,
+            size: 18,
+            color: _trackingLocation ? Colors.green : AppTheme.primaryBlue,
+          ),
+          const SizedBox(width: 7),
+          Flexible(
+            child: Text(
+              _trackingLocation
+                  ? 'Live location active'
+                  : route == null
+                  ? '${_visibleStops.length} supported stops'
+                  : 'Route ${route.number}',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMapControlButton({
+    required String tooltip,
     required IconData icon,
-    required VoidCallback onPressed,
+    required VoidCallback? onPressed,
   }) {
     return Material(
       color: Colors.white,
       elevation: 3,
       borderRadius: BorderRadius.circular(12),
       child: IconButton(
+        tooltip: tooltip,
         onPressed: onPressed,
-        icon: Icon(icon, color: AppTheme.primaryBlue),
+        icon: Icon(
+          icon,
+          color: onPressed == null
+              ? AppTheme.secondaryText
+              : AppTheme.primaryBlue,
+        ),
       ),
     );
   }
 
-  Widget _buildVehicleMarker(TransitVehicle vehicle) {
-    final bool isSelected = _selectedVehicle == vehicle;
+  Widget _buildStopInformation(TransitStop stop) {
+    final routes = _routesForStop(stop);
+    final modes = routes.map((route) => route.mode).toSet();
 
-    return Align(
-      alignment: vehicle.alignment,
-      child: GestureDetector(
-        onTap: () {
-          setState(() {
-            _selectedVehicle = vehicle;
-          });
-        },
+    return Card(
+      elevation: 8,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: isSelected ? 54 : 46,
-              height: isSelected ? 54 : 46,
-              decoration: BoxDecoration(
-                color: vehicle.colour,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 3),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.22),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
+            Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: _colourForModes(modes).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                ],
-              ),
-              child: Icon(
-                vehicle.icon,
-                color: Colors.white,
-                size: isSelected ? 28 : 24,
+                  child: Icon(
+                    _iconForModes(modes),
+                    color: _colourForModes(modes),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    stop.name,
+                    style: const TextStyle(
+                      color: AppTheme.mainText,
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close',
+                  onPressed: () {
+                    setState(() {
+                      _selectedStop = null;
+                    });
+                  },
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _buildDetailRow(
+              Icons.category_outlined,
+              'Type',
+              modes.length > 1 ? 'Transport interchange' : _stationType(modes),
+            ),
+            const SizedBox(height: 8),
+            _buildDetailRow(
+              Icons.route,
+              'Routes',
+              routes.map((route) => route.number).join(', '),
+            ),
+            const SizedBox(height: 8),
+            _buildDetailRow(
+              Icons.accessible,
+              'Accessible',
+              stop.accessible ? 'Yes' : 'No',
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Select a route',
+              style: TextStyle(
+                color: AppTheme.mainText,
+                fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 4),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                vehicle.arrivalTime,
-                style: TextStyle(
-                  color: vehicle.colour,
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: routes.map((route) {
+                return ActionChip(
+                  avatar: Icon(
+                    _iconForMode(route.mode),
+                    size: 18,
+                    color: _routeColour(route.colourHex),
+                  ),
+                  label: Text(route.number),
+                  onPressed: () => _showRoute(route),
+                );
+              }).toList(),
             ),
           ],
         ),
@@ -343,8 +945,8 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     );
   }
 
-  Widget _buildVehicleInformationCard(TransitVehicle vehicle) {
-    final bool isDelayed = vehicle.status == 'Slight delay';
+  Widget _buildRouteInformation(TransitRoute route) {
+    final stops = _repository.stopsForRoute(route);
 
     return Card(
       elevation: 8,
@@ -356,16 +958,18 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    color: vehicle.colour.withOpacity(0.12),
+                    color: _routeColour(route.colourHex).withOpacity(0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(vehicle.icon, color: vehicle.colour),
+                  child: Icon(
+                    _iconForMode(route.mode),
+                    color: _routeColour(route.colourHex),
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -373,70 +977,55 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        vehicle.name,
+                        '${route.mode} ${route.number}',
                         style: const TextStyle(
                           color: AppTheme.mainText,
-                          fontSize: 16,
+                          fontSize: 17,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 3),
                       Text(
-                        vehicle.location,
-                        style: const TextStyle(
-                          color: AppTheme.secondaryText,
-                          fontSize: 13,
-                        ),
+                        route.name,
+                        style: const TextStyle(color: AppTheme.secondaryText),
                       ),
                     ],
                   ),
                 ),
                 IconButton(
-                  onPressed: () {
-                    setState(() {
-                      _selectedVehicle = null;
-                    });
-                  },
+                  tooltip: 'Close route',
+                  onPressed: _showAllRoutes,
                   icon: const Icon(Icons.close),
                 ),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
-                  child: _buildInformationItem(
-                    title: 'Arrival',
-                    value: vehicle.arrivalTime,
-                    icon: Icons.schedule,
-                    colour: AppTheme.primaryBlue,
+                  child: _buildRouteSummary(
+                    'Stops',
+                    '${stops.length}',
+                    Icons.location_on_outlined,
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 Expanded(
-                  child: _buildInformationItem(
-                    title: 'Status',
-                    value: vehicle.status,
-                    icon: isDelayed
-                        ? Icons.warning_amber_rounded
-                        : Icons.check_circle_outline,
-                    colour: isDelayed
-                        ? const Color(0xFFF57C00)
-                        : const Color(0xFF2E7D32),
+                  child: _buildRouteSummary(
+                    'Fare',
+                    'RM${route.baseFare.toStringAsFixed(2)}',
+                    Icons.payments_outlined,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildRouteSummary(
+                    'Frequency',
+                    '${route.frequencyMinutes} min',
+                    Icons.schedule,
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: () {
-                  _showMessage('Tracking ${vehicle.name}');
-                },
-                icon: const Icon(Icons.near_me_outlined),
-                label: const Text('Track This Vehicle'),
-              ),
             ),
           ],
         ),
@@ -444,177 +1033,173 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     );
   }
 
-  Widget _buildInformationItem({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color colour,
-  }) {
+  Widget _buildDetailRow(IconData icon, String title, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 19, color: AppTheme.primaryBlue),
+        const SizedBox(width: 9),
+        SizedBox(
+          width: 78,
+          child: Text(
+            title,
+            style: const TextStyle(color: AppTheme.secondaryText),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              color: AppTheme.mainText,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRouteSummary(String title, String value, IconData icon) {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: colour.withOpacity(0.08),
+        color: AppTheme.primaryBlue.withOpacity(0.07),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Row(
+      child: Column(
         children: [
-          Icon(icon, color: colour, size: 20),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: AppTheme.secondaryText,
-                    fontSize: 11,
-                  ),
-                ),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colour,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+          Icon(icon, size: 20, color: AppTheme.primaryBlue),
+          const SizedBox(height: 5),
+          Text(
+            value,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: AppTheme.mainText,
+              fontWeight: FontWeight.bold,
             ),
+          ),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppTheme.secondaryText, fontSize: 11),
           ),
         ],
       ),
     );
   }
 
+  IconData _iconForModes(Set<String> modes) {
+    if (modes.length > 1) {
+      return Icons.hub;
+    }
+
+    if (modes.isEmpty) {
+      return Icons.location_on;
+    }
+
+    return _iconForMode(modes.first);
+  }
+
+  IconData _iconForMode(String mode) {
+    switch (mode) {
+      case 'Bus':
+        return Icons.directions_bus;
+      case 'Ferry':
+        return Icons.directions_boat;
+      case 'KTM':
+      case 'MRT':
+      case 'LRT':
+      case 'Monorail':
+        return Icons.train;
+      default:
+        return Icons.location_on;
+    }
+  }
+
+  Color _colourForModes(Set<String> modes) {
+    if (modes.length > 1) {
+      return const Color(0xFFF57C00);
+    }
+
+    if (modes.isEmpty) {
+      return AppTheme.primaryBlue;
+    }
+
+    switch (modes.first) {
+      case 'Bus':
+        return AppTheme.primaryBlue;
+      case 'Ferry':
+        return const Color(0xFF00897B);
+      case 'KTM':
+      case 'MRT':
+      case 'LRT':
+      case 'Monorail':
+        return const Color(0xFF7B1FA2);
+      default:
+        return AppTheme.primaryBlue;
+    }
+  }
+
+  String _stationType(Set<String> modes) {
+    if (modes.isEmpty) {
+      return 'Transport stop';
+    }
+
+    switch (modes.first) {
+      case 'Bus':
+        return 'Bus stop';
+      case 'Ferry':
+        return 'Ferry terminal';
+      case 'KTM':
+      case 'MRT':
+      case 'LRT':
+      case 'Monorail':
+        return '${modes.first} station';
+      default:
+        return 'Transport stop';
+    }
+  }
+
+  Color _routeColour(String hexadecimalColour) {
+    final value = hexadecimalColour.replaceFirst('#', '');
+
+    return Color(int.parse('FF$value', radix: 16));
+  }
+
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), duration: const Duration(seconds: 1)),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
   }
 }
 
-class CurrentLocationMarker extends StatelessWidget {
-  const CurrentLocationMarker({super.key});
+class CurrentUserLocationMarker extends StatelessWidget {
+  const CurrentUserLocationMarker({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 25,
-      height: 25,
-      decoration: BoxDecoration(
-        color: AppTheme.primaryBlue.withOpacity(0.25),
-        shape: BoxShape.circle,
-      ),
+    return Stack(
       alignment: Alignment.center,
-      child: Container(
-        width: 13,
-        height: 13,
-        decoration: BoxDecoration(
-          color: AppTheme.primaryBlue,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
+      children: [
+        Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: AppTheme.primaryBlue.withOpacity(0.20),
+            shape: BoxShape.circle,
+          ),
         ),
-      ),
+        Container(
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            color: AppTheme.primaryBlue,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 3),
+            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 5)],
+          ),
+        ),
+      ],
     );
-  }
-}
-
-class TransitVehicle {
-  final String name;
-  final String type;
-  final String location;
-  final String arrivalTime;
-  final String status;
-  final Alignment alignment;
-  final IconData icon;
-  final Color colour;
-
-  const TransitVehicle({
-    required this.name,
-    required this.type,
-    required this.location,
-    required this.arrivalTime,
-    required this.status,
-    required this.alignment,
-    required this.icon,
-    required this.colour,
-  });
-}
-
-class TransitMapPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final Paint minorRoadPaint = Paint()
-      ..color = Colors.white
-      ..strokeWidth = 10
-      ..strokeCap = StrokeCap.round;
-
-    final Paint majorRoadPaint = Paint()
-      ..color = const Color(0xFFCAD6E2)
-      ..strokeWidth = 18
-      ..strokeCap = StrokeCap.round;
-
-    final Paint waterPaint = Paint()
-      ..color = const Color(0xFFB9DDF5)
-      ..strokeWidth = 55
-      ..strokeCap = StrokeCap.round;
-
-    // Water area
-    final Path waterPath = Path()
-      ..moveTo(size.width * 0.05, size.height)
-      ..quadraticBezierTo(
-        size.width * 0.45,
-        size.height * 0.55,
-        size.width,
-        size.height * 0.70,
-      );
-
-    canvas.drawPath(waterPath, waterPaint);
-
-    // Major roads
-    canvas.drawLine(
-      Offset(size.width * 0.10, size.height * 0.20),
-      Offset(size.width * 0.90, size.height * 0.65),
-      majorRoadPaint,
-    );
-
-    canvas.drawLine(
-      Offset(size.width * 0.25, size.height * 0.05),
-      Offset(size.width * 0.45, size.height * 0.90),
-      majorRoadPaint,
-    );
-
-    // Minor roads
-    canvas.drawLine(
-      Offset(0, size.height * 0.35),
-      Offset(size.width, size.height * 0.25),
-      minorRoadPaint,
-    );
-
-    canvas.drawLine(
-      Offset(0, size.height * 0.58),
-      Offset(size.width, size.height * 0.48),
-      minorRoadPaint,
-    );
-
-    canvas.drawLine(
-      Offset(size.width * 0.65, 0),
-      Offset(size.width * 0.70, size.height),
-      minorRoadPaint,
-    );
-
-    canvas.drawLine(
-      Offset(size.width * 0.08, 0),
-      Offset(size.width * 0.18, size.height),
-      minorRoadPaint,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return false;
   }
 }
