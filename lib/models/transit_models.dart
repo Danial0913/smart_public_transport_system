@@ -24,6 +24,26 @@ class TransitStop {
   }
 }
 
+class JourneyLocation {
+  const JourneyLocation({
+    required this.name,
+    required this.latitude,
+    required this.longitude,
+  });
+
+  final String name;
+  final double latitude;
+  final double longitude;
+
+  factory JourneyLocation.fromStop(TransitStop stop) {
+    return JourneyLocation(
+      name: stop.name,
+      latitude: stop.latitude,
+      longitude: stop.longitude,
+    );
+  }
+}
+
 class TransitRoute {
   const TransitRoute({
     required this.id,
@@ -92,6 +112,8 @@ class JourneyOption {
     required this.origin,
     required this.destination,
     required this.legs,
+    required this.originWalkingMetres,
+    required this.destinationWalkingMetres,
     required this.walkingMetres,
     required this.departureTime,
     required this.arrivalTime,
@@ -101,9 +123,11 @@ class JourneyOption {
   });
 
   final String id;
-  final TransitStop origin;
-  final TransitStop destination;
+  final JourneyLocation origin;
+  final JourneyLocation destination;
   final List<JourneyLeg> legs;
+  final int originWalkingMetres;
+  final int destinationWalkingMetres;
   final int walkingMetres;
   final DateTime departureTime;
   final DateTime arrivalTime;
@@ -117,7 +141,8 @@ class JourneyOption {
 
   List<String> get directions {
     final result = <String>[
-      'Walk to ${legs.first.from.name}.',
+      'Walk $originWalkingMetres m from ${origin.name} to '
+          '${legs.first.from.name}.',
     ];
 
     for (final leg in legs) {
@@ -127,7 +152,10 @@ class JourneyOption {
       );
     }
 
-    result.add('Walk from ${legs.last.to.name} to your destination.');
+    result.add(
+      'Walk $destinationWalkingMetres m from ${legs.last.to.name} to '
+      '${destination.name}.',
+    );
     return result;
   }
 }
@@ -137,11 +165,41 @@ class RecentSearch {
     required this.origin,
     required this.destination,
     required this.searchedAt,
+    this.originLatitude,
+    this.originLongitude,
+    this.destinationLatitude,
+    this.destinationLongitude,
   });
 
   final String origin;
   final String destination;
   final DateTime searchedAt;
+  final double? originLatitude;
+  final double? originLongitude;
+  final double? destinationLatitude;
+  final double? destinationLongitude;
+
+  JourneyLocation? get originLocation {
+    final latitude = originLatitude;
+    final longitude = originLongitude;
+    if (latitude == null || longitude == null) return null;
+    return JourneyLocation(
+      name: origin,
+      latitude: latitude,
+      longitude: longitude,
+    );
+  }
+
+  JourneyLocation? get destinationLocation {
+    final latitude = destinationLatitude;
+    final longitude = destinationLongitude;
+    if (latitude == null || longitude == null) return null;
+    return JourneyLocation(
+      name: destination,
+      latitude: latitude,
+      longitude: longitude,
+    );
+  }
 }
 
 class SavedJourney {
@@ -154,6 +212,10 @@ class SavedJourney {
     required this.durationMinutes,
     required this.fare,
     required this.savedAt,
+    this.originLatitude,
+    this.originLongitude,
+    this.destinationLatitude,
+    this.destinationLongitude,
   });
 
   final String id;
@@ -164,6 +226,32 @@ class SavedJourney {
   final int durationMinutes;
   final double fare;
   final DateTime savedAt;
+  final double? originLatitude;
+  final double? originLongitude;
+  final double? destinationLatitude;
+  final double? destinationLongitude;
+
+  JourneyLocation? get originLocation {
+    final latitude = originLatitude;
+    final longitude = originLongitude;
+    if (latitude == null || longitude == null) return null;
+    return JourneyLocation(
+      name: origin,
+      latitude: latitude,
+      longitude: longitude,
+    );
+  }
+
+  JourneyLocation? get destinationLocation {
+    final latitude = destinationLatitude;
+    final longitude = destinationLongitude;
+    if (latitude == null || longitude == null) return null;
+    return JourneyLocation(
+      name: destination,
+      latitude: latitude,
+      longitude: longitude,
+    );
+  }
 
   factory SavedJourney.fromOption(JourneyOption option) {
     return SavedJourney(
@@ -175,6 +263,10 @@ class SavedJourney {
       durationMinutes: option.totalDurationMinutes,
       fare: option.totalFare,
       savedAt: DateTime.now(),
+      originLatitude: option.origin.latitude,
+      originLongitude: option.origin.longitude,
+      destinationLatitude: option.destination.latitude,
+      destinationLongitude: option.destination.longitude,
     );
   }
 
@@ -187,6 +279,10 @@ class SavedJourney {
     int? durationMinutes,
     double? fare,
     DateTime? savedAt,
+    double? originLatitude,
+    double? originLongitude,
+    double? destinationLatitude,
+    double? destinationLongitude,
   }) {
     return SavedJourney(
       id: id ?? this.id,
@@ -197,6 +293,10 @@ class SavedJourney {
       durationMinutes: durationMinutes ?? this.durationMinutes,
       fare: fare ?? this.fare,
       savedAt: savedAt ?? this.savedAt,
+      originLatitude: originLatitude ?? this.originLatitude,
+      originLongitude: originLongitude ?? this.originLongitude,
+      destinationLatitude: destinationLatitude ?? this.destinationLatitude,
+      destinationLongitude: destinationLongitude ?? this.destinationLongitude,
     );
   }
 

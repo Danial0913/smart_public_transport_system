@@ -117,8 +117,8 @@ class TransitRepository {
   }
 
   List<JourneyOption> findJourneys({
-    required String originText,
-    required String destinationText,
+    required JourneyLocation origin,
+    required JourneyLocation destination,
     required DateTime requestedTime,
     required bool departAt,
     required Set<String> selectedModes,
@@ -127,12 +127,19 @@ class TransitRepository {
     required int maximumWalkingMetres,
     required String preference,
   }) {
-    final origin = findStop(originText);
-    final destination = findStop(destinationText);
-
-    if (origin == null || destination == null || origin.id == destination.id) {
+    if (_distanceBetween(
+          origin.latitude,
+          origin.longitude,
+          destination.latitude,
+          destination.longitude,
+        ) <
+        20) {
       return [];
     }
+
+    final originStops = _nearbyStops(origin, maximumWalkingMetres);
+    final destinationStops = _nearbyStops(destination, maximumWalkingMetres);
+    if (originStops.isEmpty || destinationStops.isEmpty) return [];
 
     final allowedRoutes = _routes.where((route) {
       return selectedModes.contains(route.mode) &&
@@ -141,47 +148,73 @@ class TransitRepository {
 
     final drafts = <_JourneyDraft>[];
 
-    for (final route in allowedRoutes) {
-      final leg = _createLeg(route, origin, destination);
-      if (leg != null) {
-        drafts.add(
-          _JourneyDraft(
-            id: '${route.id}:${origin.id}:${destination.id}',
-            legs: [leg],
-            walkingMetres: _walkingDistance(transferCount: 0),
-          ),
-        );
-      }
-    }
+    for (final originCandidate in originStops) {
+      for (final destinationCandidate in destinationStops) {
+        final boardingStop = originCandidate.stop;
+        final alightingStop = destinationCandidate.stop;
+        if (boardingStop.id == alightingStop.id) continue;
 
-    for (final firstRoute in allowedRoutes) {
-      if (!firstRoute.stopIds.contains(origin.id)) continue;
-
-      for (final secondRoute in allowedRoutes) {
-        if (firstRoute.id == secondRoute.id ||
-            !secondRoute.stopIds.contains(destination.id)) {
-          continue;
-        }
-
-        final sharedStops = firstRoute.stopIds
-            .where(secondRoute.stopIds.contains)
-            .where((id) => id != origin.id && id != destination.id);
-
-        for (final transferStopId in sharedStops) {
-          final transferStop = _stopsById[transferStopId]!;
-          final firstLeg = _createLeg(firstRoute, origin, transferStop);
-          final secondLeg = _createLeg(secondRoute, transferStop, destination);
-
-          if (firstLeg == null || secondLeg == null) continue;
-
+        for (final route in allowedRoutes) {
+          final leg = _createLeg(route, boardingStop, alightingStop);
+          if (leg == null) continue;
           drafts.add(
             _JourneyDraft(
-              id: '${firstRoute.id}:${secondRoute.id}:$transferStopId:'
-                  '${origin.id}:${destination.id}',
-              legs: [firstLeg, secondLeg],
-              walkingMetres: _walkingDistance(transferCount: 1),
+              id: '${route.id}:${boardingStop.id}:${alightingStop.id}',
+              legs: [leg],
+              originWalkingMetres: originCandidate.distanceMetres,
+              destinationWalkingMetres:
+                  destinationCandidate.distanceMetres,
+              walkingMetres: originCandidate.distanceMetres +
+                  destinationCandidate.distanceMetres,
             ),
           );
+        }
+
+        for (final firstRoute in allowedRoutes) {
+          if (!firstRoute.stopIds.contains(boardingStop.id)) continue;
+
+          for (final secondRoute in allowedRoutes) {
+            if (firstRoute.id == secondRoute.id ||
+                !secondRoute.stopIds.contains(alightingStop.id)) {
+              continue;
+            }
+
+            final sharedStops = firstRoute.stopIds
+                .where(secondRoute.stopIds.contains)
+                .where(
+                  (id) => id != boardingStop.id && id != alightingStop.id,
+                );
+
+            for (final transferStopId in sharedStops) {
+              final transferStop = _stopsById[transferStopId]!;
+              final firstLeg = _createLeg(
+                firstRoute,
+                boardingStop,
+                transferStop,
+              );
+              final secondLeg = _createLeg(
+                secondRoute,
+                transferStop,
+                alightingStop,
+              );
+              if (firstLeg == null || secondLeg == null) continue;
+
+              const transferWalkingMetres = 120;
+              drafts.add(
+                _JourneyDraft(
+                  id: '${firstRoute.id}:${secondRoute.id}:$transferStopId:'
+                      '${boardingStop.id}:${alightingStop.id}',
+                  legs: [firstLeg, secondLeg],
+                  originWalkingMetres: originCandidate.distanceMetres,
+                  destinationWalkingMetres:
+                      destinationCandidate.distanceMetres,
+                  walkingMetres: originCandidate.distanceMetres +
+                      destinationCandidate.distanceMetres +
+                      transferWalkingMetres,
+                ),
+              );
+            }
+          }
         }
       }
     }
@@ -195,8 +228,8 @@ class TransitRepository {
         .where((draft) => draft.walkingMetres <= maximumWalkingMetres)
         .where((draft) {
           if (!accessibleOnly) return true;
-          return origin.accessible &&
-              destination.accessible &&
+          return draft.legs.first.from.accessible &&
+              draft.legs.last.to.accessible &&
               draft.legs.every(
                 (leg) => leg.route.accessible &&
                     leg.stops.every((stop) => stop.accessible),
@@ -226,13 +259,15 @@ class TransitRepository {
             origin: origin,
             destination: destination,
             legs: draft.legs,
+            originWalkingMetres: draft.originWalkingMetres,
+            destinationWalkingMetres: draft.destinationWalkingMetres,
             walkingMetres: draft.walkingMetres,
             departureTime: departure,
             arrivalTime: arrival,
             totalDurationMinutes: totalMinutes,
             totalFare: totalFare,
-            accessible: origin.accessible &&
-                destination.accessible &&
+            accessible: draft.legs.first.from.accessible &&
+                draft.legs.last.to.accessible &&
                 draft.legs.every((leg) => leg.route.accessible),
           );
         })
@@ -245,14 +280,21 @@ class TransitRepository {
 
       switch (preference) {
         case 'Fastest':
-          return a.totalDurationMinutes.compareTo(b.totalDurationMinutes);
+          final durationResult =
+              a.totalDurationMinutes.compareTo(b.totalDurationMinutes);
+          return durationResult != 0
+              ? durationResult
+              : a.totalFare.compareTo(b.totalFare);
         case 'Lowest Fare':
           final fareResult = a.totalFare.compareTo(b.totalFare);
           return fareResult != 0
               ? fareResult
               : a.totalDurationMinutes.compareTo(b.totalDurationMinutes);
         case 'Less Walking':
-          return a.walkingMetres.compareTo(b.walkingMetres);
+          final walkingResult = a.walkingMetres.compareTo(b.walkingMetres);
+          return walkingResult != 0
+              ? walkingResult
+              : a.totalDurationMinutes.compareTo(b.totalDurationMinutes);
         default:
           return _recommendedScore(a).compareTo(_recommendedScore(b));
       }
@@ -290,8 +332,56 @@ class TransitRepository {
     );
   }
 
-  int _walkingDistance({required int transferCount}) {
-    return 220 + transferCount * 120;
+  List<_StopCandidate> _nearbyStops(
+    JourneyLocation location,
+    int maximumWalkingMetres,
+  ) {
+    final candidates = _stopsById.values.map((stop) {
+      final distance = _distanceBetween(
+        location.latitude,
+        location.longitude,
+        stop.latitude,
+        stop.longitude,
+      ).round();
+      return _StopCandidate(stop: stop, distanceMetres: distance);
+    }).where((candidate) {
+      return candidate.distanceMetres <= maximumWalkingMetres;
+    }).toList();
+
+    candidates.sort(
+      (a, b) => a.distanceMetres.compareTo(b.distanceMetres),
+    );
+    return candidates;
+  }
+
+  double _distanceBetween(
+    double firstLatitude,
+    double firstLongitude,
+    double secondLatitude,
+    double secondLongitude,
+  ) {
+    const earthRadiusMetres = 6371000.0;
+    final firstLatitudeRadians = firstLatitude * math.pi / 180;
+    final secondLatitudeRadians = secondLatitude * math.pi / 180;
+    final latitudeDifference =
+        (secondLatitude - firstLatitude) * math.pi / 180;
+    final longitudeDifference =
+        (secondLongitude - firstLongitude) * math.pi / 180;
+
+    final value =
+        math.sin(latitudeDifference / 2) *
+            math.sin(latitudeDifference / 2) +
+        math.cos(firstLatitudeRadians) *
+            math.cos(secondLatitudeRadians) *
+            math.sin(longitudeDifference / 2) *
+            math.sin(longitudeDifference / 2);
+    final safeValue = value.clamp(0.0, 1.0);
+    final angle = 2 *
+        math.atan2(
+          math.sqrt(safeValue),
+          math.sqrt(1 - safeValue),
+        );
+    return earthRadiusMetres * angle;
   }
 
   double _recommendedScore(JourneyOption option) {
@@ -310,10 +400,24 @@ class _JourneyDraft {
   const _JourneyDraft({
     required this.id,
     required this.legs,
+    required this.originWalkingMetres,
+    required this.destinationWalkingMetres,
     required this.walkingMetres,
   });
 
   final String id;
   final List<JourneyLeg> legs;
+  final int originWalkingMetres;
+  final int destinationWalkingMetres;
   final int walkingMetres;
+}
+
+class _StopCandidate {
+  const _StopCandidate({
+    required this.stop,
+    required this.distanceMetres,
+  });
+
+  final TransitStop stop;
+  final int distanceMetres;
 }

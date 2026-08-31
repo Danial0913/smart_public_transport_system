@@ -10,12 +10,12 @@ class SupportedStopMapPicker extends StatefulWidget {
     super.key,
     required this.title,
     required this.stops,
-    this.initialStop,
+    this.initialLocation,
   });
 
   final String title;
   final List<TransitStop> stops;
-  final TransitStop? initialStop;
+  final JourneyLocation? initialLocation;
 
   @override
   State<SupportedStopMapPicker> createState() =>
@@ -23,20 +23,72 @@ class SupportedStopMapPicker extends StatefulWidget {
 }
 
 class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
-  TransitStop? _selectedStop;
+  LatLng? _selectedPoint;
+  String? _selectedName;
 
   @override
   void initState() {
     super.initState();
-    _selectedStop = widget.initialStop;
+    final initialLocation = widget.initialLocation;
+    if (initialLocation != null) {
+      _selectedPoint = LatLng(
+        initialLocation.latitude,
+        initialLocation.longitude,
+      );
+      _selectedName = initialLocation.name;
+    }
+  }
+
+  void _selectPoint(LatLng point, {String? name}) {
+    setState(() {
+      _selectedPoint = point;
+      _selectedName = name;
+    });
+  }
+
+  TransitStop? _findNearestStop(LatLng point) {
+    TransitStop? nearestStop;
+    double? smallestDifference;
+
+    for (final stop in widget.stops) {
+      final latitudeDifference = stop.latitude - point.latitude;
+      final longitudeDifference = stop.longitude - point.longitude;
+      final difference = latitudeDifference * latitudeDifference +
+          longitudeDifference * longitudeDifference;
+      if (smallestDifference == null || difference < smallestDifference) {
+        smallestDifference = difference;
+        nearestStop = stop;
+      }
+    }
+    return nearestStop;
+  }
+
+  void _returnSelectedLocation() {
+    final point = _selectedPoint;
+    if (point == null) return;
+
+    final name = _selectedName ??
+        'Map location (${point.latitude.toStringAsFixed(5)}, '
+            '${point.longitude.toStringAsFixed(5)})';
+    Navigator.pop(
+      context,
+      JourneyLocation(
+        name: name,
+        latitude: point.latitude,
+        longitude: point.longitude,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final initialStop = widget.initialStop;
-    final initialCentre = initialStop == null
+    final initialLocation = widget.initialLocation;
+    final initialCentre = initialLocation == null
         ? const LatLng(4.2, 102.0)
-        : LatLng(initialStop.latitude, initialStop.longitude);
+        : LatLng(initialLocation.latitude, initialLocation.longitude);
+    final selectedPoint = _selectedPoint;
+    final nearestStop =
+        selectedPoint == null ? null : _findNearestStop(selectedPoint);
 
     return SafeArea(
       child: SizedBox(
@@ -48,12 +100,24 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      widget.title,
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.title,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Text(
+                          'Tap anywhere on the map to choose a location.',
+                          style: TextStyle(
+                            color: AppTheme.secondaryText,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   IconButton(
@@ -69,7 +133,8 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
                   FlutterMap(
                     options: MapOptions(
                       initialCenter: initialCentre,
-                      initialZoom: initialStop == null ? 6 : 12,
+                      initialZoom: initialLocation == null ? 6 : 14,
+                      onTap: (_, point) => _selectPoint(point),
                     ),
                     children: [
                       TileLayer(
@@ -80,30 +145,40 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
                             'my.edu.tarumt.smart_tublic_transport_system',
                       ),
                       MarkerLayer(
-                        markers: widget.stops.map((stop) {
-                          final selected = _selectedStop?.id == stop.id;
-                          return Marker(
-                            width: 46,
-                            height: 46,
-                            point: LatLng(stop.latitude, stop.longitude),
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: () {
-                                setState(() => _selectedStop = stop);
-                              },
-                              child: Tooltip(
-                                message: stop.name,
-                                child: Icon(
-                                  Icons.location_on,
-                                  size: selected ? 42 : 34,
-                                  color: selected
-                                      ? Colors.red
-                                      : AppTheme.primaryBlue,
+                        markers: [
+                          for (final stop in widget.stops)
+                            Marker(
+                              width: 38,
+                              height: 38,
+                              point: LatLng(stop.latitude, stop.longitude),
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () => _selectPoint(
+                                  LatLng(stop.latitude, stop.longitude),
+                                  name: stop.name,
+                                ),
+                                child: Tooltip(
+                                  message: stop.name,
+                                  child: const Icon(
+                                    Icons.directions_transit,
+                                    size: 25,
+                                    color: AppTheme.primaryBlue,
+                                  ),
                                 ),
                               ),
                             ),
-                          );
-                        }).toList(),
+                          if (selectedPoint != null)
+                            Marker(
+                              width: 48,
+                              height: 48,
+                              point: selectedPoint,
+                              child: const Icon(
+                                Icons.location_on,
+                                size: 44,
+                                color: Colors.red,
+                              ),
+                            ),
+                        ],
                       ),
                       const Align(
                         alignment: Alignment.topRight,
@@ -141,25 +216,49 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
                             ),
                             const SizedBox(width: 10),
                             Expanded(
-                              child: Text(
-                                _selectedStop?.name ??
-                                    'Tap a marker to select a supported stop',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
+                              child: selectedPoint == null
+                                  ? const Text(
+                                      'Tap the map to select a location.',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    )
+                                  : Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _selectedName ?? 'Selected location',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        Text(
+                                          '${selectedPoint.latitude.toStringAsFixed(5)}, '
+                                          '${selectedPoint.longitude.toStringAsFixed(5)}',
+                                          style: const TextStyle(fontSize: 11),
+                                        ),
+                                        if (nearestStop != null)
+                                          Text(
+                                            'Nearest transport stop: '
+                                            '${nearestStop.name}',
+                                            style: const TextStyle(
+                                              color: AppTheme.secondaryText,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
                             ),
                             const SizedBox(width: 8),
                             FilledButton(
                               style: FilledButton.styleFrom(
                                 minimumSize: const Size(84, 44),
                               ),
-                              onPressed: _selectedStop == null
+                              onPressed: selectedPoint == null
                                   ? null
-                                  : () => Navigator.pop(
-                                      context,
-                                      _selectedStop,
-                                    ),
+                                  : _returnSelectedLocation,
                               child: const Text('Select'),
                             ),
                           ],

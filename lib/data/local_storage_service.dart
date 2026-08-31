@@ -20,7 +20,7 @@ class LocalStorageService {
 
     _database = await openDatabase(
       databasePath,
-      version: 1,
+      version: 2,
       onConfigure: (database) async {
         await database.execute('PRAGMA foreign_keys = ON');
       },
@@ -50,6 +50,10 @@ class LocalStorageService {
             id TEXT PRIMARY KEY,
             origin TEXT NOT NULL,
             destination TEXT NOT NULL,
+            origin_latitude REAL,
+            origin_longitude REAL,
+            destination_latitude REAL,
+            destination_longitude REAL,
             route_summary TEXT NOT NULL,
             departure_time TEXT NOT NULL,
             duration_minutes INTEGER NOT NULL,
@@ -62,6 +66,10 @@ class LocalStorageService {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             origin TEXT NOT NULL,
             destination TEXT NOT NULL,
+            origin_latitude REAL,
+            origin_longitude REAL,
+            destination_latitude REAL,
+            destination_longitude REAL,
             searched_at TEXT NOT NULL,
             UNIQUE(origin, destination)
           )
@@ -90,6 +98,34 @@ class LocalStorageService {
           'colour_value': 0xFF00897B,
           'created_at': now.add(const Duration(microseconds: 1)).toIso8601String(),
         });
+      },
+      onUpgrade: (database, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await database.execute(
+            'ALTER TABLE saved_journeys ADD COLUMN origin_latitude REAL',
+          );
+          await database.execute(
+            'ALTER TABLE saved_journeys ADD COLUMN origin_longitude REAL',
+          );
+          await database.execute(
+            'ALTER TABLE saved_journeys ADD COLUMN destination_latitude REAL',
+          );
+          await database.execute(
+            'ALTER TABLE saved_journeys ADD COLUMN destination_longitude REAL',
+          );
+          await database.execute(
+            'ALTER TABLE recent_searches ADD COLUMN origin_latitude REAL',
+          );
+          await database.execute(
+            'ALTER TABLE recent_searches ADD COLUMN origin_longitude REAL',
+          );
+          await database.execute(
+            'ALTER TABLE recent_searches ADD COLUMN destination_latitude REAL',
+          );
+          await database.execute(
+            'ALTER TABLE recent_searches ADD COLUMN destination_longitude REAL',
+          );
+        }
       },
     );
   }
@@ -153,15 +189,19 @@ class LocalStorageService {
   }
 
   Future<void> recordSearch({
-    required String origin,
-    required String destination,
+    required JourneyLocation origin,
+    required JourneyLocation destination,
   }) async {
     final database = await _db;
     await database.insert(
       'recent_searches',
       {
-        'origin': origin.trim(),
-        'destination': destination.trim(),
+        'origin': origin.name.trim(),
+        'destination': destination.name.trim(),
+        'origin_latitude': origin.latitude,
+        'origin_longitude': origin.longitude,
+        'destination_latitude': destination.latitude,
+        'destination_longitude': destination.longitude,
         'searched_at': DateTime.now().toIso8601String(),
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
@@ -188,6 +228,12 @@ class LocalStorageService {
         origin: row['origin'] as String,
         destination: row['destination'] as String,
         searchedAt: DateTime.parse(row['searched_at'] as String),
+        originLatitude: (row['origin_latitude'] as num?)?.toDouble(),
+        originLongitude: (row['origin_longitude'] as num?)?.toDouble(),
+        destinationLatitude:
+            (row['destination_latitude'] as num?)?.toDouble(),
+        destinationLongitude:
+            (row['destination_longitude'] as num?)?.toDouble(),
       );
     }).toList();
   }
@@ -359,6 +405,10 @@ class LocalStorageService {
       'id': journey.id,
       'origin': journey.origin,
       'destination': journey.destination,
+      'origin_latitude': journey.originLatitude,
+      'origin_longitude': journey.originLongitude,
+      'destination_latitude': journey.destinationLatitude,
+      'destination_longitude': journey.destinationLongitude,
       'route_summary': journey.routeSummary,
       'departure_time': journey.departureTime.toIso8601String(),
       'duration_minutes': journey.durationMinutes,
@@ -377,6 +427,12 @@ class LocalStorageService {
       durationMinutes: row['duration_minutes'] as int,
       fare: (row['fare'] as num).toDouble(),
       savedAt: DateTime.parse(row['saved_at'] as String),
+      originLatitude: (row['origin_latitude'] as num?)?.toDouble(),
+      originLongitude: (row['origin_longitude'] as num?)?.toDouble(),
+      destinationLatitude:
+          (row['destination_latitude'] as num?)?.toDouble(),
+      destinationLongitude:
+          (row['destination_longitude'] as num?)?.toDouble(),
     );
   }
 

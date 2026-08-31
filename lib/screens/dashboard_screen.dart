@@ -25,6 +25,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   final TextEditingController _originController = TextEditingController();
   final TextEditingController _destinationController = TextEditingController();
+  JourneyLocation? _originLocation;
+  JourneyLocation? _destinationLocation;
 
   int _selectedIndex = 0;
   bool _isLoading = true;
@@ -103,12 +105,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  void _openPlanner({String? origin, String? destination}) {
+  void _openPlanner({
+    String? origin,
+    String? destination,
+    JourneyLocation? originLocation,
+    JourneyLocation? destinationLocation,
+  }) {
     setState(() {
-      if (origin != null && origin.isNotEmpty) {
+      if (originLocation != null) {
+        _originLocation = originLocation;
+        _originController.text = originLocation.name;
+      } else if (origin != null && origin.isNotEmpty) {
+        final stop = _repository.findStop(origin);
+        _originLocation =
+            stop == null ? null : JourneyLocation.fromStop(stop);
         _originController.text = origin;
       }
-      if (destination != null) {
+      if (destinationLocation != null) {
+        _destinationLocation = destinationLocation;
+        _destinationController.text = destinationLocation.name;
+      } else if (destination != null) {
+        final stop = _repository.findStop(destination);
+        _destinationLocation =
+            stop == null ? null : JourneyLocation.fromStop(stop);
         _destinationController.text = destination;
       }
       _plannerKey = UniqueKey();
@@ -118,28 +137,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _swapLocations() {
     final origin = _originController.text;
+    final originLocation = _originLocation;
     setState(() {
       _originController.text = _destinationController.text;
       _destinationController.text = origin;
+      _originLocation = _destinationLocation;
+      _destinationLocation = originLocation;
     });
   }
 
-  Future<void> _selectStopFromMap({
+  Future<void> _selectLocationFromMap({
     required TextEditingController controller,
     required String title,
+    required bool isOrigin,
   }) async {
-    final selectedStop = await showModalBottomSheet<TransitStop>(
+    final selectedLocation = await showModalBottomSheet<JourneyLocation>(
       context: context,
       isScrollControlled: true,
       builder: (_) => SupportedStopMapPicker(
         title: title,
         stops: _repository.stops,
-        initialStop: _repository.findStop(controller.text),
+        initialLocation: isOrigin ? _originLocation : _destinationLocation,
       ),
     );
 
-    if (selectedStop == null || !mounted) return;
-    setState(() => controller.text = selectedStop.name);
+    if (selectedLocation == null || !mounted) return;
+    setState(() {
+      controller.text = selectedLocation.name;
+      if (isOrigin) {
+        _originLocation = selectedLocation;
+      } else {
+        _destinationLocation = selectedLocation;
+      }
+    });
   }
 
   Future<void> _useGpsForOrigin() async {
@@ -158,11 +188,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return;
       }
 
-      final nearestStop = _repository.findNearestStop(latitude, longitude);
-      if (nearestStop == null || !mounted) return;
+      if (!mounted) return;
+      final gpsLocation = JourneyLocation(
+        name: 'Current location',
+        latitude: latitude,
+        longitude: longitude,
+      );
 
-      setState(() => _originController.text = nearestStop.name);
-      _showMessage('Nearest supported stop: ${nearestStop.name}');
+      setState(() {
+        _originLocation = gpsLocation;
+        _originController.text = gpsLocation.name;
+      });
+      final nearestStop = _repository.findNearestStop(latitude, longitude);
+      if (nearestStop != null) {
+        _showMessage(
+          'GPS selected. Nearest transport stop: ${nearestStop.name}',
+        );
+      }
     } catch (error) {
       if (mounted) _showMessage('Unable to get current location: $error');
     } finally {
@@ -350,6 +392,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _openPlanner(
             origin: journey.origin,
             destination: journey.destination,
+            originLocation: journey.originLocation,
+            destinationLocation: journey.destinationLocation,
           );
           return;
         }
@@ -388,6 +432,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             key: _plannerKey,
             initialOrigin: _originController.text,
             initialDestination: _destinationController.text,
+            initialOriginLocation: _originLocation,
+            initialDestinationLocation: _destinationLocation,
           ),
           const TransitMapScreen(),
           const TravelHistoryScreen(),
@@ -597,9 +643,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Row(
             children: [
               IconButton(
-                onPressed: () => _selectStopFromMap(
+                onPressed: () => _selectLocationFromMap(
                   controller: _originController,
                   title: 'Select origin on map',
+                  isOrigin: true,
                 ),
                 tooltip: 'Select origin on map',
                 icon: const Icon(
@@ -611,9 +658,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: TextField(
                   controller: _originController,
                   readOnly: true,
-                  onTap: () => _selectStopFromMap(
+                  onTap: () => _selectLocationFromMap(
                     controller: _originController,
                     title: 'Select origin on map',
+                    isOrigin: true,
                   ),
                   decoration: const InputDecoration(
                     hintText: 'Select origin',
@@ -643,9 +691,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Row(
             children: [
               IconButton(
-                onPressed: () => _selectStopFromMap(
+                onPressed: () => _selectLocationFromMap(
                   controller: _destinationController,
                   title: 'Select destination on map',
+                  isOrigin: false,
                 ),
                 tooltip: 'Select destination on map',
                 icon: const Icon(Icons.location_on, color: Colors.red),
@@ -654,9 +703,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: TextField(
                   controller: _destinationController,
                   readOnly: true,
-                  onTap: () => _selectStopFromMap(
+                  onTap: () => _selectLocationFromMap(
                     controller: _destinationController,
                     title: 'Select destination on map',
+                    isOrigin: false,
                   ),
                   decoration: const InputDecoration(
                     hintText: 'Where do you want to go?',
@@ -670,17 +720,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 14),
           FilledButton.icon(
             onPressed: () {
-              if (_originController.text.trim().isEmpty) {
+              if (_originLocation == null) {
                 _showMessage('Please select an origin or use GPS.');
                 return;
               }
-              if (_destinationController.text.trim().isEmpty) {
+              if (_destinationLocation == null) {
                 _showMessage('Please select a destination on the map.');
                 return;
               }
               _openPlanner(
-                origin: _originController.text.trim(),
-                destination: _destinationController.text.trim(),
+                originLocation: _originLocation,
+                destinationLocation: _destinationLocation,
               );
             },
             icon: const Icon(Icons.route),
@@ -815,6 +865,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   onPressed: () => _openPlanner(
                     origin: upcomingJourney.origin,
                     destination: upcomingJourney.destination,
+                    originLocation: upcomingJourney.originLocation,
+                    destinationLocation: upcomingJourney.destinationLocation,
                   ),
                   child: const Text('View Journey'),
                 ),
@@ -948,6 +1000,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             onTap: () => _openPlanner(
               origin: search.origin,
               destination: search.destination,
+              originLocation: search.originLocation,
+              destinationLocation: search.destinationLocation,
             ),
           ),
         );
