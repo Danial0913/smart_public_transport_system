@@ -38,6 +38,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _gettingLocation = false;
   Key _plannerKey = UniqueKey();
   String? _selectedCategoryId;
+  JourneyOption? _activeJourney;
+  Key _mapKey = UniqueKey();
 
   List<FavouriteCategory> _categories = [];
   List<FavouriteItem> _favourites = [];
@@ -244,6 +246,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } finally {
       if (mounted) setState(() => _gettingLocation = false);
     }
+  }
+
+  void _openJourneyOnMap(JourneyOption option) {
+    setState(() {
+      _activeJourney = option;
+      _mapKey = UniqueKey();
+      _selectedIndex = 2;
+    });
   }
 
   Future<void> _addFavourite() async {
@@ -468,9 +478,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
             initialDestination: _destinationController.text,
             initialOriginLocation: _originLocation,
             initialDestinationLocation: _destinationLocation,
-            onStartJourney: () => _changePage(2),
+            onStartJourney: _openJourneyOnMap,
           ),
-          const TransitMapScreen(),
+          TransitMapScreen(
+            key: _mapKey,
+            journey: _activeJourney,
+          ),
           const TravelHistoryScreen(),
           const ProfileScreen(),
         ],

@@ -24,7 +24,7 @@ class JourneyPlannerScreen extends StatefulWidget {
   final String initialDestination;
   final JourneyLocation? initialOriginLocation;
   final JourneyLocation? initialDestinationLocation;
-  final VoidCallback? onStartJourney;
+  final ValueChanged<JourneyOption>? onStartJourney;
 
   @override
   State<JourneyPlannerScreen> createState() => _JourneyPlannerScreenState();
@@ -529,7 +529,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
 
     // Close the route-options popup underneath the journey-details popup.
     Navigator.pop(context);
-    widget.onStartJourney?.call();
+    widget.onStartJourney?.call(option);
     _showMessage(
       'Journey started. ${option.routeSummary} was added to frequent services.',
     );
