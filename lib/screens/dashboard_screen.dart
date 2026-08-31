@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../data/geocoding_service.dart';
 import '../data/local_storage_service.dart';
 import '../data/location_service.dart';
+import '../data/ridership_api_service.dart';
 import '../data/transit_repository.dart';
+import '../models/ridership_models.dart';
 import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
 import 'journey_planner_screen.dart';
@@ -22,6 +25,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final LocalStorageService _storage = LocalStorageService.instance;
   final TransitRepository _repository = TransitRepository.instance;
   final LocationService _locationService = LocationService();
+  final GeocodingService _geocodingService = GeocodingService();
+  final RidershipApiService _ridershipApiService = RidershipApiService();
 
   final TextEditingController _originController = TextEditingController();
   final TextEditingController _destinationController = TextEditingController();
@@ -39,6 +44,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<RecentSearch> _recentSearches = [];
   List<SavedJourney> _savedJourneys = [];
   List<ServiceUsage> _frequentServices = [];
+
+  late Future<List<PublicTransportRidership>> _publicTransportRidership;
+  late Future<List<KtmbRidership>> _ktmbRidership;
 
   static const List<String> _pageTitles = [
     'Home',
@@ -65,6 +73,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (mounted) {
       setState(() {
         _isLoading = true;
+        _publicTransportRidership =
+            _ridershipApiService.fetchPublicTransportRidership();
+        _ktmbRidership = _ridershipApiService.fetchKtmbRidership();
       });
     }
 
@@ -151,13 +162,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     required String title,
     required bool isOrigin,
   }) async {
-    final selectedLocation = await showModalBottomSheet<JourneyLocation>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => SupportedStopMapPicker(
-        title: title,
-        stops: _repository.stops,
-        initialLocation: isOrigin ? _originLocation : _destinationLocation,
+    final selectedLocation = await Navigator.push<JourneyLocation>(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => SupportedStopMapPicker(
+          title: title,
+          stops: _repository.stops,
+          initialLocation: isOrigin ? _originLocation : _destinationLocation,
+        ),
       ),
     );
 
@@ -183,7 +196,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       if (latitude == null || longitude == null) {
         if (mounted) {
-          _showMessage('Location permission or GPS service is not available.');
+          _showMessage(
+            _locationService.lastErrorMessage ??
+                'Location permission or GPS service is not available.',
+          );
         }
         return;
       }
@@ -199,9 +215,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return;
       }
 
+      final placeName = await _geocodingService.getPlaceName(
+        latitude,
+        longitude,
+      );
+      final nearestStop = _repository.findNearestStop(latitude, longitude);
       if (!mounted) return;
       final gpsLocation = JourneyLocation(
-        name: 'Current location',
+        name: placeName ??
+            (nearestStop == null
+                ? 'Current location'
+                : 'Near ${nearestStop.name}'),
         latitude: latitude,
         longitude: longitude,
       );
@@ -210,7 +234,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _originLocation = gpsLocation;
         _originController.text = gpsLocation.name;
       });
-      final nearestStop = _repository.findNearestStop(latitude, longitude);
       if (nearestStop != null) {
         _showMessage(
           'GPS selected. Nearest transport stop: ${nearestStop.name}',
@@ -445,6 +468,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             initialDestination: _destinationController.text,
             initialOriginLocation: _originLocation,
             initialDestinationLocation: _destinationLocation,
+            onStartJourney: () => _changePage(2),
           ),
           const TransitMapScreen(),
           const TravelHistoryScreen(),
@@ -628,6 +652,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           const SizedBox(height: 10),
           _buildFrequentServices(),
+          const SizedBox(height: 24),
+          const Text(
+            'Malaysia Public Transport Usage',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 10),
+          _buildPublicTransportRidership(),
+          const SizedBox(height: 24),
+          const Text(
+            'Daily KTMB Usage',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 10),
+          _buildKtmbRidership(),
           const SizedBox(height: 24),
           _buildSectionHeader(
             title: 'Supported Live Status',
@@ -1044,6 +1082,226 @@ class _DashboardScreenState extends State<DashboardScreen> {
         );
       }).toList(),
     );
+  }
+
+  Widget _buildPublicTransportRidership() {
+    return FutureBuilder<List<PublicTransportRidership>>(
+      future: _publicTransportRidership,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return _buildApiLoadingCard('Loading public transport usage...');
+        }
+
+        if (snapshot.hasError) {
+          return _buildApiErrorCard(
+            'Unable to load public transport usage.',
+            () {
+              setState(() {
+                _publicTransportRidership =
+                    _ridershipApiService.fetchPublicTransportRidership();
+              });
+            },
+          );
+        }
+
+        final records = snapshot.data ?? [];
+        if (records.isEmpty) {
+          return _buildApiMessageCard('No public transport usage is available.');
+        }
+
+        final latest = records.first;
+        final services = latest.services.entries.where((entry) {
+          return entry.value != null;
+        }).toList();
+        services.sort((first, second) {
+          return second.value!.compareTo(first.value!);
+        });
+
+        return Card(
+          margin: EdgeInsets.zero,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Latest audited data: ${_formatApiDate(latest.date)}',
+                  style: const TextStyle(
+                    color: AppTheme.secondaryText,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                for (final service in services.take(5)) ...[
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.directions_transit,
+                        color: AppTheme.primaryBlue,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(child: Text(service.key)),
+                      Text(
+                        '${service.value} trips',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 20),
+                ],
+                const Text(
+                  'Source: data.gov.my, Prasarana and Ministry of Transport',
+                  style: TextStyle(
+                    color: AppTheme.secondaryText,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildKtmbRidership() {
+    return FutureBuilder<List<KtmbRidership>>(
+      future: _ktmbRidership,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return _buildApiLoadingCard('Loading daily KTMB usage...');
+        }
+
+        if (snapshot.hasError) {
+          return _buildApiErrorCard(
+            'Unable to load daily KTMB usage.',
+            () {
+              setState(() {
+                _ktmbRidership = _ridershipApiService.fetchKtmbRidership();
+              });
+            },
+          );
+        }
+
+        final records = snapshot.data ?? [];
+        if (records.isEmpty) {
+          return _buildApiMessageCard('No KTMB usage is available.');
+        }
+
+        final latestDate = records.first.date;
+        final latestRecords = records.where((record) {
+          return record.date == latestDate;
+        }).toList();
+        latestRecords.sort((first, second) {
+          return second.ridership.compareTo(first.ridership);
+        });
+
+        return Card(
+          margin: EdgeInsets.zero,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Data for ${_formatApiDate(latestDate)}',
+                  style: const TextStyle(
+                    color: AppTheme.secondaryText,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                for (final record in latestRecords) ...[
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.train,
+                        color: Color(0xFF7B1FA2),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(child: Text(record.serviceName)),
+                      Text(
+                        '${record.ridership} trips',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 20),
+                ],
+                const Text(
+                  'Source: data.gov.my, KTMB and Ministry of Transport',
+                  style: TextStyle(
+                    color: AppTheme.secondaryText,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildApiLoadingCard(String message) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildApiMessageCard(String message) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            const Icon(Icons.info_outline, color: AppTheme.secondaryText),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildApiErrorCard(String message, VoidCallback onRetry) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            const Icon(Icons.cloud_off, color: Colors.red),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message)),
+            TextButton(onPressed: onRetry, child: const Text('Retry')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatApiDate(String date) {
+    final parts = date.split('-');
+    if (parts.length != 3) return date;
+    return '${parts[2]}/${parts[1]}/${parts[0]}';
   }
 
   Widget _buildLiveStatus() {

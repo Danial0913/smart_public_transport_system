@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../data/geocoding_service.dart';
 import '../data/local_storage_service.dart';
 import '../data/location_service.dart';
 import '../data/transit_repository.dart';
@@ -16,12 +17,14 @@ class JourneyPlannerScreen extends StatefulWidget {
     this.initialDestination = '',
     this.initialOriginLocation,
     this.initialDestinationLocation,
+    this.onStartJourney,
   });
 
   final String initialOrigin;
   final String initialDestination;
   final JourneyLocation? initialOriginLocation;
   final JourneyLocation? initialDestinationLocation;
+  final VoidCallback? onStartJourney;
 
   @override
   State<JourneyPlannerScreen> createState() => _JourneyPlannerScreenState();
@@ -31,6 +34,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   final TransitRepository _repository = TransitRepository.instance;
   final LocalStorageService _storage = LocalStorageService.instance;
   final LocationService _locationService = LocationService();
+  final GeocodingService _geocodingService = GeocodingService();
 
   late final TextEditingController _originController;
   late final TextEditingController _destinationController;
@@ -144,13 +148,15 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     required String title,
     required bool isOrigin,
   }) async {
-    final selectedLocation = await showModalBottomSheet<JourneyLocation>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => SupportedStopMapPicker(
-        title: title,
-        stops: _repository.stops,
-        initialLocation: isOrigin ? _originLocation : _destinationLocation,
+    final selectedLocation = await Navigator.push<JourneyLocation>(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => SupportedStopMapPicker(
+          title: title,
+          stops: _repository.stops,
+          initialLocation: isOrigin ? _originLocation : _destinationLocation,
+        ),
       ),
     );
 
@@ -177,7 +183,10 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
 
       if (latitude == null || longitude == null) {
         if (mounted) {
-          _showMessage('Location permission or GPS service is not available.');
+          _showMessage(
+            _locationService.lastErrorMessage ??
+                'Location permission or GPS service is not available.',
+          );
         }
         return;
       }
@@ -193,9 +202,17 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         return;
       }
 
+      final placeName = await _geocodingService.getPlaceName(
+        latitude,
+        longitude,
+      );
+      final nearestStop = _repository.findNearestStop(latitude, longitude);
       if (!mounted) return;
       final gpsLocation = JourneyLocation(
-        name: 'Current location',
+        name: placeName ??
+            (nearestStop == null
+                ? 'Current location'
+                : 'Near ${nearestStop.name}'),
         latitude: latitude,
         longitude: longitude,
       );
@@ -205,7 +222,6 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         _originLocation = gpsLocation;
         _routeResults = [];
       });
-      final nearestStop = _repository.findNearestStop(latitude, longitude);
       if (nearestStop != null) {
         _showMessage(
           'GPS selected. Nearest transport stop: ${nearestStop.name}',
@@ -286,7 +302,87 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       _showMessage(
         'No route matches these filters. Try more modes or a longer walking distance.',
       );
+    } else {
+      await _showRouteResults();
     }
+  }
+
+  Future<void> _showRouteResults() async {
+    if (_routeResults.isEmpty) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SizedBox(
+              height: MediaQuery.of(context).size.height * 0.88,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 12, 12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${_routeResults.length} Route Options',
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${_originController.text} to '
+                                '${_destinationController.text}',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: AppTheme.secondaryText,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                      itemCount: _routeResults.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 14),
+                      itemBuilder: (context, index) {
+                        return _buildRouteOptionCard(
+                          _routeResults[index],
+                          recommended: index == 0,
+                          onSavedChanged: () {
+                            if (sheetContext.mounted) {
+                              setSheetState(() {});
+                            }
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _toggleSavedJourney(JourneyOption option) async {
@@ -315,10 +411,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       await _storage.recordServiceUse(leg.route);
     }
     if (!mounted || !bottomSheetContext.mounted) return;
-    Navigator.pop(bottomSheetContext);
-    _showMessage(
-      'Journey started. ${option.routeSummary} was added to frequent services.',
-    );
+    Navigator.pop(bottomSheetContext, true);
   }
 
   Future<void> _openSavedJourneyManager() async {
@@ -350,8 +443,8 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     }
   }
 
-  void _showJourneyDetails(JourneyOption option) {
-    showModalBottomSheet<void>(
+  Future<void> _showJourneyDetails(JourneyOption option) async {
+    final started = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -431,6 +524,15 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         );
       },
     );
+
+    if (started != true || !mounted) return;
+
+    // Close the route-options popup underneath the journey-details popup.
+    Navigator.pop(context);
+    widget.onStartJourney?.call();
+    _showMessage(
+      'Journey started. ${option.routeSummary} was added to frequent services.',
+    );
   }
 
   void _showMessage(String message) {
@@ -506,39 +608,11 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
           ),
         ),
         if (_routeResults.isNotEmpty) ...[
-          const SizedBox(height: 30),
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Route Options',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-              ),
-              Text('${_routeResults.length} found'),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '${_originController.text} -> ${_destinationController.text}',
-            style: const TextStyle(color: AppTheme.secondaryText),
-          ),
-          const SizedBox(height: 14),
-          for (int index = 0; index < _routeResults.length; index++) ...[
-            _buildRouteOptionCard(
-              _routeResults[index],
-              recommended: index == 0,
-            ),
-            const SizedBox(height: 14),
-          ],
-          Text(
-            'Routes use the offline teaching subset from '
-            '${_repository.metadata['source']}.',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: AppTheme.secondaryText,
-              fontSize: 11,
-            ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _showRouteResults,
+            icon: const Icon(Icons.route),
+            label: Text('View ${_routeResults.length} Route Options'),
           ),
         ],
       ],
@@ -931,6 +1005,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   Widget _buildRouteOptionCard(
     JourneyOption option, {
     required bool recommended,
+    VoidCallback? onSavedChanged,
   }) {
     final isSaved = _savedJourneyIds.contains(option.id);
     return Container(
@@ -962,7 +1037,10 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
                 ),
               const Spacer(),
               IconButton(
-                onPressed: () => _toggleSavedJourney(option),
+                onPressed: () async {
+                  await _toggleSavedJourney(option);
+                  onSavedChanged?.call();
+                },
                 tooltip: isSaved ? 'Remove saved plan' : 'Save plan',
                 icon: Icon(
                   isSaved ? Icons.bookmark : Icons.bookmark_border,
@@ -1149,14 +1227,15 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
                         suffixIcon: Icon(Icons.map_outlined),
                       ),
                       onTap: () async {
-                        final selected =
-                            await showModalBottomSheet<JourneyLocation>(
-                          context: dialogContext,
-                          isScrollControlled: true,
-                          builder: (_) => SupportedStopMapPicker(
-                            title: 'Change origin',
-                            stops: _repository.stops,
-                            initialLocation: originLocation,
+                        final selected = await Navigator.push<JourneyLocation>(
+                          dialogContext,
+                          MaterialPageRoute(
+                            fullscreenDialog: true,
+                            builder: (_) => SupportedStopMapPicker(
+                              title: 'Change origin',
+                              stops: _repository.stops,
+                              initialLocation: originLocation,
+                            ),
                           ),
                         );
                         if (selected == null) return;
@@ -1175,14 +1254,15 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
                         suffixIcon: Icon(Icons.map_outlined),
                       ),
                       onTap: () async {
-                        final selected =
-                            await showModalBottomSheet<JourneyLocation>(
-                          context: dialogContext,
-                          isScrollControlled: true,
-                          builder: (_) => SupportedStopMapPicker(
-                            title: 'Change destination',
-                            stops: _repository.stops,
-                            initialLocation: destinationLocation,
+                        final selected = await Navigator.push<JourneyLocation>(
+                          dialogContext,
+                          MaterialPageRoute(
+                            fullscreenDialog: true,
+                            builder: (_) => SupportedStopMapPicker(
+                              title: 'Change destination',
+                              stops: _repository.stops,
+                              initialLocation: destinationLocation,
+                            ),
                           ),
                         );
                         if (selected == null) return;

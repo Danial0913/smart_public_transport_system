@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:location/location.dart';
 import 'package:permission_handler/permission_handler.dart' as handler;
 
 class LocationService {
   final Location _location = Location();
+  String? lastErrorMessage;
 
   static bool isInsideMalaysia(double latitude, double longitude) {
     return latitude >= 0.8 &&
@@ -12,45 +15,78 @@ class LocationService {
   }
 
   Future<LocationData?> getCurrentLocation() async {
-    final permissionStatus =
-        await handler.Permission.locationWhenInUse.request();
-
-    if (permissionStatus != handler.PermissionStatus.granted) {
-      return null;
+    lastErrorMessage = null;
+    var permissionGranted =
+        await handler.Permission.locationWhenInUse.isGranted;
+    if (!permissionGranted) {
+      final permissionStatus =
+          await handler.Permission.locationWhenInUse.request();
+      permissionGranted =
+          permissionStatus == handler.PermissionStatus.granted;
+      if (!permissionGranted) {
+        lastErrorMessage = 'Location permission was not granted.';
+        return null;
+      }
     }
 
-    var gpsEnabled = await _location.serviceEnabled();
+    var gpsEnabled =
+        await handler.Permission.location.serviceStatus.isEnabled;
     if (!gpsEnabled) {
       gpsEnabled = await _location.requestService();
     }
 
-    if (!gpsEnabled) return null;
-
-    await _location.changeSettings(
-      accuracy: LocationAccuracy.high,
-      interval: 1000,
-      distanceFilter: 0,
-    );
-
-    LocationData? bestLocation;
-    double? bestAccuracy;
-
-    // Read a few GPS samples and keep the most accurate one.
-    for (var attempt = 0; attempt < 3; attempt++) {
-      final currentLocation = await _location
-          .getLocation()
-          .timeout(const Duration(seconds: 8));
-      final accuracy = currentLocation.accuracy ?? 999999;
-
-      if (bestLocation == null || accuracy < bestAccuracy!) {
-        bestLocation = currentLocation;
-        bestAccuracy = accuracy;
-      }
-
-      if (accuracy <= 30) break;
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (!gpsEnabled) {
+      lastErrorMessage = 'Please turn on the device location service.';
+      return null;
     }
 
-    return bestLocation;
+    final result = Completer<LocationData?>();
+    LocationData? lastLocation;
+
+    // Use the same continuous location stream taught in Practical 13. Ignore
+    // an old foreign reading and wait for the next valid Malaysian update.
+    late StreamSubscription<LocationData> subscription;
+    subscription = _location.onLocationChanged.listen(
+      (currentLocation) {
+        lastLocation = currentLocation;
+        final latitude = currentLocation.latitude;
+        final longitude = currentLocation.longitude;
+        if (latitude != null &&
+            longitude != null &&
+            isInsideMalaysia(latitude, longitude) &&
+            !result.isCompleted) {
+          result.complete(currentLocation);
+        }
+      },
+      onError: (_) {
+        if (!result.isCompleted) {
+          result.complete(null);
+        }
+      },
+    );
+
+    final timer = Timer(const Duration(seconds: 30), () {
+      if (!result.isCompleted) {
+        result.complete(null);
+      }
+    });
+
+    final location = await result.future;
+    timer.cancel();
+    await subscription.cancel();
+
+    if (location == null) {
+      final rejectedLatitude = lastLocation?.latitude;
+      final rejectedLongitude = lastLocation?.longitude;
+      if (rejectedLatitude != null && rejectedLongitude != null) {
+        lastErrorMessage =
+            'The device reported ${rejectedLatitude.toStringAsFixed(5)}, '
+            '${rejectedLongitude.toStringAsFixed(5)}, which is outside '
+            'Malaysia. No Malaysian GPS update was received.';
+      } else {
+        lastErrorMessage = 'Unable to receive a GPS location. Please try again.';
+      }
+    }
+    return location;
   }
 }

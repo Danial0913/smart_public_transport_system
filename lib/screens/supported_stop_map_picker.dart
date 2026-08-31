@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../data/geocoding_service.dart';
 import '../data/location_service.dart';
 import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
@@ -24,8 +25,13 @@ class SupportedStopMapPicker extends StatefulWidget {
 }
 
 class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
+  final GeocodingService _geocodingService = GeocodingService();
+  final MapController _mapController = MapController();
+  final TextEditingController _searchController = TextEditingController();
   LatLng? _selectedPoint;
   String? _selectedName;
+  bool _searching = false;
+  bool _findingName = false;
 
   List<TransitStop> get _mapStops {
     const maximumMarkers = 500;
@@ -56,7 +62,14 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
     }
   }
 
-  void _selectPoint(LatLng point, {String? name}) {
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _mapController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _selectPoint(LatLng point, {String? name}) async {
     if (!LocationService.isInsideMalaysia(
       point.latitude,
       point.longitude,
@@ -71,7 +84,49 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
     setState(() {
       _selectedPoint = point;
       _selectedName = name;
+      _findingName = name == null;
     });
+
+    if (name != null) return;
+
+    final placeName = await _geocodingService.getPlaceName(
+      point.latitude,
+      point.longitude,
+    );
+    if (!mounted || _selectedPoint != point) return;
+
+    final nearestStop = _findNearestStop(point);
+    setState(() {
+      _selectedName = placeName ??
+          (nearestStop == null
+              ? 'Selected location'
+              : 'Near ${nearestStop.name}');
+      _findingName = false;
+    });
+  }
+
+  Future<void> _searchForLocation() async {
+    if (_searching || _searchController.text.trim().isEmpty) return;
+    setState(() => _searching = true);
+
+    final location = await _geocodingService.searchLocation(
+      _searchController.text,
+    );
+    if (!mounted) return;
+
+    setState(() => _searching = false);
+    if (location == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Location not found. Try a more complete name.'),
+        ),
+      );
+      return;
+    }
+
+    final point = LatLng(location.latitude, location.longitude);
+    await _selectPoint(point, name: location.name);
+    _mapController.move(point, 15);
   }
 
   TransitStop? _findNearestStop(LatLng point) {
@@ -95,9 +150,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
     final point = _selectedPoint;
     if (point == null) return;
 
-    final name = _selectedName ??
-        'Map location (${point.latitude.toStringAsFixed(5)}, '
-            '${point.longitude.toStringAsFixed(5)})';
+    final name = _selectedName ?? 'Selected location';
     Navigator.pop(
       context,
       JourneyLocation(
@@ -125,39 +178,44 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
     final nearestStop =
         selectedPoint == null ? null : _findNearestStop(selectedPoint);
 
-    return SafeArea(
-      child: SizedBox(
-        height: MediaQuery.of(context).size.height * 0.86,
-        child: Column(
-          children: [
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        title: Text(widget.title),
+      ),
+      body: Column(
+        children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
               child: Row(
                 children: [
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.title,
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const Text(
-                          'Tap anywhere on the map to choose a location.',
-                          style: TextStyle(
-                            color: AppTheme.secondaryText,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+                    child: TextField(
+                      controller: _searchController,
+                      textInputAction: TextInputAction.search,
+                      onSubmitted: (_) => _searchForLocation(),
+                      decoration: const InputDecoration(
+                        hintText: 'Search place, address or landmark',
+                        prefixIcon: Icon(Icons.search),
+                      ),
                     ),
                   ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(88, 48),
+                    ),
+                    onPressed: _searching ? null : _searchForLocation,
+                    child: _searching
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('Search'),
                   ),
                 ],
               ),
@@ -166,6 +224,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
               child: Stack(
                 children: [
                   FlutterMap(
+                    mapController: _mapController,
                     options: MapOptions(
                       initialCenter: initialCentre,
                       initialZoom: initialLocation == null ? 11 : 14,
@@ -264,15 +323,13 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          _selectedName ?? 'Selected location',
+                                          _findingName
+                                              ? 'Finding place name...'
+                                              : _selectedName ??
+                                                  'Selected location',
                                           style: const TextStyle(
                                             fontWeight: FontWeight.w600,
                                           ),
-                                        ),
-                                        Text(
-                                          '${selectedPoint.latitude.toStringAsFixed(5)}, '
-                                          '${selectedPoint.longitude.toStringAsFixed(5)}',
-                                          style: const TextStyle(fontSize: 11),
                                         ),
                                         if (nearestStop != null)
                                           Text(
@@ -292,6 +349,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
                                 minimumSize: const Size(84, 44),
                               ),
                               onPressed: selectedPoint == null
+                                      || _findingName
                                   ? null
                                   : _returnSelectedLocation,
                               child: const Text('Select'),
@@ -304,8 +362,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
                 ],
               ),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }
