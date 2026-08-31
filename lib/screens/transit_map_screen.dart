@@ -193,7 +193,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
   List<TransitStop> get _renderedStops {
     if (_activeJourney != null) {
-      return _visibleStops;
+      return [];
     }
 
     if (_selectedRoute != null) {
@@ -821,6 +821,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
             ),
             PolylineLayer(polylines: _buildRoutePolylines()),
             MarkerLayer(markers: _renderedStops.map(_buildStopMarker).toList()),
+            MarkerLayer(markers: _buildJourneyStationMarkers()),
             MarkerLayer(markers: _buildJourneyEndpointMarkers()),
             MarkerLayer(markers: _buildCurrentLocationMarkers()),
             const Align(
@@ -935,15 +936,45 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   List<Polyline> _buildRoutePolylines() {
     final journey = _activeJourney;
     if (journey != null) {
-      return journey.legs.map((leg) {
-        return Polyline(
-          points: leg.stops.map((stop) {
-            return LatLng(stop.latitude, stop.longitude);
-          }).toList(),
-          color: _routeColour(leg.route.colourHex),
-          strokeWidth: 6,
+      final polylines = <Polyline>[];
+      final firstLeg = journey.legs.first;
+      final lastLeg = journey.legs.last;
+
+      _addWalkingPolyline(
+        polylines,
+        LatLng(journey.origin.latitude, journey.origin.longitude),
+        LatLng(firstLeg.from.latitude, firstLeg.from.longitude),
+      );
+
+      for (int index = 0; index < journey.legs.length; index++) {
+        final leg = journey.legs[index];
+        polylines.add(
+          Polyline(
+            points: leg.stops.map((stop) {
+              return LatLng(stop.latitude, stop.longitude);
+            }).toList(),
+            color: _routeColour(leg.route.colourHex),
+            strokeWidth: 6,
+          ),
         );
-      }).toList();
+
+        if (index < journey.legs.length - 1) {
+          final nextLeg = journey.legs[index + 1];
+          _addWalkingPolyline(
+            polylines,
+            LatLng(leg.to.latitude, leg.to.longitude),
+            LatLng(nextLeg.from.latitude, nextLeg.from.longitude),
+          );
+        }
+      }
+
+      _addWalkingPolyline(
+        polylines,
+        LatLng(lastLeg.to.latitude, lastLeg.to.longitude),
+        LatLng(journey.destination.latitude, journey.destination.longitude),
+      );
+
+      return polylines;
     }
 
     return _displayedRoutes.map((route) {
@@ -959,6 +990,21 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
         strokeWidth: _selectedRoute == null ? 4 : 6,
       );
     }).toList();
+  }
+
+  void _addWalkingPolyline(List<Polyline> polylines, LatLng from, LatLng to) {
+    if ((from.latitude - to.latitude).abs() < 0.000001 &&
+        (from.longitude - to.longitude).abs() < 0.000001) {
+      return;
+    }
+
+    polylines.add(
+      Polyline(
+        points: [from, to],
+        color: const Color(0xFF616161),
+        strokeWidth: 4,
+      ),
+    );
   }
 
   Marker _buildStopMarker(TransitStop stop) {
@@ -1001,6 +1047,100 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
               size: isSelected ? 30 : 26,
               color: isSelected ? Colors.red : _colourForModes(modes),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Marker> _buildJourneyStationMarkers() {
+    final journey = _activeJourney;
+    if (journey == null || journey.legs.isEmpty) return [];
+
+    final markers = <Marker>[
+      _buildJourneyStationMarker(
+        stop: journey.legs.first.from,
+        label:
+            'Board ${journey.legs.first.route.number} at ${journey.legs.first.from.name}',
+        icon: _iconForMode(journey.legs.first.route.mode),
+        colour: _routeColour(journey.legs.first.route.colourHex),
+      ),
+    ];
+
+    for (int index = 0; index < journey.legs.length - 1; index++) {
+      final currentLeg = journey.legs[index];
+      final nextLeg = journey.legs[index + 1];
+
+      markers.add(
+        _buildJourneyStationMarker(
+          stop: currentLeg.to,
+          label:
+              'Change from ${currentLeg.route.number} to ${nextLeg.route.number} at ${currentLeg.to.name}',
+          icon: Icons.transfer_within_a_station,
+          colour: const Color(0xFFF57C00),
+        ),
+      );
+
+      if (currentLeg.to.id != nextLeg.from.id) {
+        markers.add(
+          _buildJourneyStationMarker(
+            stop: nextLeg.from,
+            label:
+                'Walk and board ${nextLeg.route.number} at ${nextLeg.from.name}',
+            icon: Icons.directions_walk,
+            colour: const Color(0xFF616161),
+          ),
+        );
+      }
+    }
+
+    markers.add(
+      _buildJourneyStationMarker(
+        stop: journey.legs.last.to,
+        label:
+            'Leave ${journey.legs.last.route.number} at ${journey.legs.last.to.name}',
+        icon: Icons.stop_circle_outlined,
+        colour: _routeColour(journey.legs.last.route.colourHex),
+      ),
+    );
+
+    return markers;
+  }
+
+  Marker _buildJourneyStationMarker({
+    required TransitStop stop,
+    required String label,
+    required IconData icon,
+    required Color colour,
+  }) {
+    return Marker(
+      point: LatLng(stop.latitude, stop.longitude),
+      width: 56,
+      height: 56,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          setState(() {
+            _selectedStop = stop;
+            _followUserLocation = false;
+          });
+        },
+        child: Tooltip(
+          message: label,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              border: Border.all(color: colour, width: 4),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 6,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Icon(icon, color: colour, size: 28),
           ),
         ),
       ),
@@ -1187,7 +1327,9 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        journey.routeSummary,
+                        journey.legs.length == 1
+                            ? 'Direct transport journey'
+                            : '${journey.legs.length} transport legs',
                         style: const TextStyle(color: AppTheme.secondaryText),
                       ),
                     ],
@@ -1204,6 +1346,8 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
                 ),
               ],
             ),
+            const SizedBox(height: 12),
+            _buildJourneySequence(journey),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -1243,6 +1387,101 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildJourneySequence(JourneyOption journey) {
+    final steps = <Widget>[];
+
+    void addStep(Widget step) {
+      if (steps.isNotEmpty) {
+        steps.add(
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 4),
+            child: Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: AppTheme.secondaryText,
+            ),
+          ),
+        );
+      }
+      steps.add(step);
+    }
+
+    if (journey.originWalkingMetres > 0) {
+      addStep(
+        _buildJourneyStepChip(
+          icon: Icons.directions_walk,
+          label: '${journey.originWalkingMetres} m',
+          colour: const Color(0xFF616161),
+        ),
+      );
+    }
+
+    for (int index = 0; index < journey.legs.length; index++) {
+      final leg = journey.legs[index];
+      addStep(
+        _buildJourneyStepChip(
+          icon: _iconForMode(leg.route.mode),
+          label: leg.route.number,
+          colour: _routeColour(leg.route.colourHex),
+        ),
+      );
+
+      if (index < journey.legs.length - 1) {
+        final nextLeg = journey.legs[index + 1];
+        if (leg.to.id != nextLeg.from.id) {
+          addStep(
+            _buildJourneyStepChip(
+              icon: Icons.directions_walk,
+              label: 'Transfer walk',
+              colour: const Color(0xFF616161),
+            ),
+          );
+        }
+      }
+    }
+
+    if (journey.destinationWalkingMetres > 0) {
+      addStep(
+        _buildJourneyStepChip(
+          icon: Icons.directions_walk,
+          label: '${journey.destinationWalkingMetres} m',
+          colour: const Color(0xFF616161),
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: steps),
+    );
+  }
+
+  Widget _buildJourneyStepChip({
+    required IconData icon,
+    required String label,
+    required Color colour,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: colour.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: colour.withOpacity(0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: colour),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(color: colour, fontWeight: FontWeight.bold),
+          ),
+        ],
       ),
     );
   }
