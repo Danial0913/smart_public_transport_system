@@ -1,74 +1,197 @@
-import 'dart:convert';
 import 'dart:math' as math;
 
-import 'package:flutter/services.dart';
-
 import '../models/transit_models.dart';
+import 'gtfs_api_service.dart';
 
 class TransitRepository {
   TransitRepository._();
 
   static final TransitRepository instance = TransitRepository._();
+  final GtfsApiService _api = GtfsApiService.instance;
 
   final Map<String, TransitStop> _stopsById = {};
   final Map<String, TransitRoute> _routesById = {};
   final Map<String, List<TransitRoute>> _routesByStopId = {};
+  final Map<String, Set<String>> _routeStopIdSets = {};
   final Map<String, Set<String>> _connectedRouteIds = {};
+  final Map<String, List<TransitStop>> _stopsByGridCell = {};
   final List<TransitRoute> _routes = [];
+  final Set<String> _loadedSourceIds = {};
 
   bool _loaded = false;
+  Future<void>? _loadFuture;
   Map<String, dynamic> _metadata = {};
 
   List<TransitStop> get stops => List.unmodifiable(_stopsById.values);
   List<TransitRoute> get routes => List.unmodifiable(_routes);
   Map<String, dynamic> get metadata => Map.unmodifiable(_metadata);
 
-  Future<void> load() async {
-    if (_loaded) return;
+  Future<void> load() {
+    if (_loaded) return Future<void>.value();
 
-    final jsonText = await rootBundle.loadString(
-      'assets/data/penang_transit_data.json',
-    );
-    final data = jsonDecode(jsonText) as Map<String, dynamic>;
+    return _loadFuture ??= _loadData();
+  }
 
-    _metadata = data['metadata'] as Map<String, dynamic>;
+  Future<void> _loadData() async {
+    _stopsById.clear();
+    _routesById.clear();
+    _routesByStopId.clear();
+    _routeStopIdSets.clear();
+    _connectedRouteIds.clear();
+    _stopsByGridCell.clear();
+    _routes.clear();
+    _loadedSourceIds.clear();
 
-    for (final item in data['stops'] as List<dynamic>) {
-      final stop = TransitStop.fromJson(item as Map<String, dynamic>);
-      _stopsById[stop.id] = stop;
+    _loaded = true;
+  }
+
+  Future<bool> ensureDataNear(double latitude, double longitude) async {
+    await load();
+    return _loadSources(_api.sourceIdsNear(latitude, longitude));
+  }
+
+  Future<bool> ensureDataForJourney(
+    JourneyLocation origin,
+    JourneyLocation destination,
+  ) async {
+    await load();
+    final sourceIds = <String>{
+      ..._api.sourceIdsNear(origin.latitude, origin.longitude),
+      ..._api.sourceIdsNear(destination.latitude, destination.longitude),
+    };
+    return _loadSources(sourceIds);
+  }
+
+  Future<bool> _loadSources(Iterable<String> sourceIds) async {
+    var added = false;
+    var attempted = 0;
+    Object? lastError;
+
+    for (final sourceId in sourceIds) {
+      if (_loadedSourceIds.contains(sourceId)) continue;
+      attempted++;
+      try {
+        final data = await _api.loadFeed(sourceId);
+        await _mergeFeed(data);
+        _loadedSourceIds.add(sourceId);
+        added = true;
+      } catch (error) {
+        lastError = error;
+      }
     }
 
-    for (final item in data['routes'] as List<dynamic>) {
-      final route = TransitRoute.fromJson(item as Map<String, dynamic>);
+    if (added) {
+      await _rebuildConnections();
+      _metadata = {
+        'source': 'Malaysia official GTFS Static API',
+        'loadedSources': _loadedSourceIds.toList(),
+        'fareNotice': 'Displayed fares are estimates, not ticket quotations.',
+      };
+    } else if (attempted > 0 && lastError != null && _routes.isEmpty) {
+      throw Exception('Unable to load official transit data: $lastError');
+    }
+    return added;
+  }
+
+  Future<void> _mergeFeed(Map<String, dynamic> data) async {
+    final aliases = <String, String>{};
+    final stopItems = data['stops'] as List<dynamic>? ?? const [];
+    for (var index = 0; index < stopItems.length; index++) {
+      final stop = TransitStop.fromJson(stopItems[index] as Map<String, dynamic>);
+      final nearby = _findExistingStop(stop.latitude, stop.longitude, 150);
+      if (nearby != null) {
+        aliases[stop.id] = nearby.id;
+      } else {
+        aliases[stop.id] = stop.id;
+        _stopsById[stop.id] = stop;
+        _stopsByGridCell
+            .putIfAbsent(_gridKey(stop.latitude, stop.longitude), () => [])
+            .add(stop);
+      }
+      if (index > 0 && index % 800 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    final routeItems = data['routes'] as List<dynamic>? ?? const [];
+    for (var index = 0; index < routeItems.length; index++) {
+      final json = Map<String, dynamic>.from(
+        routeItems[index] as Map<String, dynamic>,
+      );
+      final originalIds = (json['stopIds'] as List<dynamic>).cast<String>();
+      final stopIds = <String>[];
+      for (final id in originalIds) {
+        final mapped = aliases[id];
+        if (mapped != null && (stopIds.isEmpty || stopIds.last != mapped)) {
+          stopIds.add(mapped);
+        }
+      }
+      if (stopIds.length < 2) continue;
+      json['stopIds'] = stopIds;
+      final route = TransitRoute.fromJson(json);
+      if (_routesById.containsKey(route.id)) continue;
       _routes.add(route);
       _routesById[route.id] = route;
+      _routeStopIdSets[route.id] = route.stopIds.toSet();
       for (final stopId in route.stopIds) {
         _routesByStopId.putIfAbsent(stopId, () => []).add(route);
       }
+      if (index > 0 && index % 100 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
     }
+  }
 
+  Future<void> _rebuildConnections() async {
+    _connectedRouteIds.clear();
+    var processed = 0;
     for (final routesAtStop in _routesByStopId.values) {
       for (final route in routesAtStop) {
-        final connections = _connectedRouteIds.putIfAbsent(
-          route.id,
-          () => <String>{},
-        );
-        for (final otherRoute in routesAtStop) {
-          if (otherRoute.id != route.id) connections.add(otherRoute.id);
+        final connections = _connectedRouteIds.putIfAbsent(route.id, () => {});
+        for (final other in routesAtStop) {
+          final sameService = other.number == route.number &&
+              other.name == route.name;
+          if (other.id != route.id && !sameService) {
+            connections.add(other.id);
+          }
+        }
+      }
+      processed++;
+      if (processed % 800 == 0) await Future<void>.delayed(Duration.zero);
+    }
+  }
+
+  TransitStop? _findExistingStop(
+    double latitude,
+    double longitude,
+    int maximumDistanceMetres,
+  ) {
+    final row = (latitude / 0.05).floor();
+    final column = (longitude / 0.05).floor();
+    for (var nearbyRow = row - 1; nearbyRow <= row + 1; nearbyRow++) {
+      for (var nearbyColumn = column - 1;
+          nearbyColumn <= column + 1;
+          nearbyColumn++) {
+        for (final stop in
+            _stopsByGridCell['$nearbyRow:$nearbyColumn'] ?? const []) {
+          if (_distanceBetween(
+                latitude,
+                longitude,
+                stop.latitude,
+                stop.longitude,
+              ) <=
+              maximumDistanceMetres) {
+            return stop;
+          }
         }
       }
     }
-
-    _loaded = true;
+    return null;
   }
 
   TransitStop? findStop(String input) {
     final query = _normalise(input);
     if (query.isEmpty) return null;
-
-    if (query == 'current location' || query == 'campus' || query == 'tarumt') {
-      return _stopsById['tarumt_penang'];
-    }
 
     for (final stop in _stopsById.values) {
       if (_normalise(stop.name) == query) return stop;
@@ -168,9 +291,15 @@ class TransitRepository {
     final allowedRouteIds = allowedRoutes.map((route) => route.id).toSet();
 
     final drafts = <_JourneyDraft>[];
+    const maximumDrafts = 120;
+    const maximumRouteChecks = 20000;
+    var routeChecks = 0;
 
+    candidatePairs:
     for (final originCandidate in originStops) {
       for (final destinationCandidate in destinationStops) {
+        if (drafts.length >= maximumDrafts) break candidatePairs;
+
         final boardingStop = originCandidate.stop;
         final alightingStop = destinationCandidate.stop;
         if (boardingStop.id == alightingStop.id) continue;
@@ -183,6 +312,7 @@ class TransitRepository {
             .toList();
 
         for (final route in firstRoutes) {
+          if (drafts.length >= maximumDrafts) break;
           final leg = _createLeg(route, boardingStop, alightingStop);
           if (leg == null) continue;
           drafts.add(
@@ -199,7 +329,11 @@ class TransitRepository {
         }
 
         for (final firstRoute in firstRoutes) {
+          if (drafts.length >= maximumDrafts) break;
           for (final secondRoute in finalRoutes) {
+            if (drafts.length >= maximumDrafts) break;
+            routeChecks++;
+            if (routeChecks >= maximumRouteChecks) break candidatePairs;
             if (firstRoute.id == secondRoute.id ||
                 !(_connectedRouteIds[firstRoute.id] ?? const <String>{})
                     .contains(secondRoute.id)) {
@@ -207,12 +341,13 @@ class TransitRepository {
             }
 
             final sharedStops = firstRoute.stopIds
-                .where(secondRoute.stopIds.contains)
+                .where(_routeStopIdSets[secondRoute.id]!.contains)
                 .where(
                   (id) => id != boardingStop.id && id != alightingStop.id,
                 );
 
             for (final transferStopId in sharedStops) {
+              if (drafts.length >= maximumDrafts) break;
               final transferStop = _stopsById[transferStopId]!;
               final firstLeg = _createLeg(
                 firstRoute,
@@ -246,14 +381,19 @@ class TransitRepository {
 
         // Also allow two transfers, for example Bus -> KTM -> MRT/LRT.
         for (final firstRoute in firstRoutes) {
+          if (drafts.length >= maximumDrafts) break;
           final middleRouteIds =
               _connectedRouteIds[firstRoute.id] ?? const <String>{};
           for (final middleRouteId in middleRouteIds) {
+            if (drafts.length >= maximumDrafts) break;
             if (!allowedRouteIds.contains(middleRouteId)) continue;
             final middleRoute = _routesById[middleRouteId];
             if (middleRoute == null) continue;
 
             for (final finalRoute in finalRoutes) {
+              if (drafts.length >= maximumDrafts) break;
+              routeChecks++;
+              if (routeChecks >= maximumRouteChecks) break candidatePairs;
               if (finalRoute.id == firstRoute.id ||
                   finalRoute.id == middleRoute.id ||
                   !(_connectedRouteIds[middleRoute.id] ?? const <String>{})
@@ -262,13 +402,13 @@ class TransitRepository {
               }
 
               final firstTransferIds = firstRoute.stopIds
-                  .where(middleRoute.stopIds.contains)
+                  .where(_routeStopIdSets[middleRoute.id]!.contains)
                   .where(
                     (id) => id != boardingStop.id && id != alightingStop.id,
                   )
                   .take(2);
               final secondTransferIds = middleRoute.stopIds
-                  .where(finalRoute.stopIds.contains)
+                  .where(_routeStopIdSets[finalRoute.id]!.contains)
                   .where(
                     (id) => id != boardingStop.id && id != alightingStop.id,
                   )
@@ -276,7 +416,9 @@ class TransitRepository {
                   .toList();
 
               for (final firstTransferId in firstTransferIds) {
+                if (drafts.length >= maximumDrafts) break;
                 for (final secondTransferId in secondTransferIds) {
+                  if (drafts.length >= maximumDrafts) break;
                   if (firstTransferId == secondTransferId) continue;
                   final firstTransfer = _stopsById[firstTransferId]!;
                   final secondTransfer = _stopsById[secondTransferId]!;
@@ -415,17 +557,12 @@ class TransitRepository {
   ) {
     final fromIndex = route.stopIds.indexOf(from.id);
     final toIndex = route.stopIds.indexOf(to.id);
-    if (fromIndex == -1 || toIndex == -1 || fromIndex == toIndex) return null;
+    if (fromIndex == -1 || toIndex == -1 || fromIndex >= toIndex) return null;
 
-    final start = math.min(fromIndex, toIndex);
-    final end = math.max(fromIndex, toIndex);
-    var legStops = route.stopIds
-        .sublist(start, end + 1)
+    final legStops = route.stopIds
+        .sublist(fromIndex, toIndex + 1)
         .map((id) => _stopsById[id]!)
         .toList();
-    if (fromIndex > toIndex) {
-      legStops = legStops.reversed.toList();
-    }
 
     return JourneyLeg(
       route: route,
@@ -441,7 +578,25 @@ class TransitRepository {
     JourneyLocation location,
     int maximumWalkingMetres,
   ) {
-    final candidates = _stopsById.values.map((stop) {
+    const gridSize = 0.05;
+    final centreRow = (location.latitude / gridSize).floor();
+    final centreColumn = (location.longitude / gridSize).floor();
+    final cellRadius = (maximumWalkingMetres / 5000).ceil() + 1;
+    final nearbyStops = <TransitStop>[];
+
+    for (var row = centreRow - cellRadius;
+        row <= centreRow + cellRadius;
+        row++) {
+      for (var column = centreColumn - cellRadius;
+          column <= centreColumn + cellRadius;
+          column++) {
+        nearbyStops.addAll(
+          _stopsByGridCell['$row:$column'] ?? const <TransitStop>[],
+        );
+      }
+    }
+
+    final candidates = nearbyStops.map((stop) {
       final distance = _distanceBetween(
         location.latitude,
         location.longitude,
@@ -457,6 +612,13 @@ class TransitRepository {
       (a, b) => a.distanceMetres.compareTo(b.distanceMetres),
     );
     return candidates.take(6).toList();
+  }
+
+  String _gridKey(double latitude, double longitude) {
+    const gridSize = 0.05;
+    final row = (latitude / gridSize).floor();
+    final column = (longitude / gridSize).floor();
+    return '$row:$column';
   }
 
   double _distanceBetween(

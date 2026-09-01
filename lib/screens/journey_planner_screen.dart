@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../data/geocoding_service.dart';
+import '../data/input_validator.dart';
 import '../data/local_storage_service.dart';
 import '../data/location_service.dart';
 import '../data/transit_repository.dart';
@@ -58,6 +59,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     'LRT',
     'KTM',
     'Monorail',
+    'Ferry',
   };
   List<JourneyOption> _routeResults = [];
   List<RecentSearch> _recentSearches = [];
@@ -148,6 +150,19 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     required String title,
     required bool isOrigin,
   }) async {
+    final initialLocation = isOrigin
+        ? _originLocation
+        : (_destinationLocation ?? _originLocation);
+    try {
+      await _repository.ensureDataNear(
+        initialLocation?.latitude ?? 5.4141,
+        initialLocation?.longitude ?? 100.3288,
+      );
+    } catch (error) {
+      if (mounted) _showMessage('Unable to load transport stops: $error');
+      return;
+    }
+    if (!mounted) return;
     final selectedLocation = await Navigator.push<JourneyLocation>(
       context,
       MaterialPageRoute(
@@ -243,25 +258,9 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       _showMessage('Please enter an origin and destination.');
       return;
     }
-    if (_selectedModes.isEmpty) {
-      _showMessage('Please select at least one transport mode.');
-      return;
-    }
-
     final origin = _originLocation ?? _locationFromStopName(originText);
     final destination =
         _destinationLocation ?? _locationFromStopName(destinationText);
-    if (origin == null || destination == null) {
-      _showMessage('Select the origin and destination on the map.');
-      return;
-    }
-    if (origin.latitude == destination.latitude &&
-        origin.longitude == destination.longitude) {
-      _showMessage('Origin and destination cannot be the same.');
-      return;
-    }
-
-    setState(() => _searching = true);
     final requestedTime = DateTime(
       _selectedDate.year,
       _selectedDate.month,
@@ -269,41 +268,68 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       _selectedTime.hour,
       _selectedTime.minute,
     );
-
-    final routes = _repository.findJourneys(
+    final validationError = InputValidator.journey(
       origin: origin,
       destination: destination,
       requestedTime: requestedTime,
-      departAt: _departAt,
-      selectedModes: _selectedModes,
-      accessibleOnly: _accessibleOnly,
-      fewerTransfers: _fewerTransfers,
-      maximumWalkingMetres: _maximumWalkingDistance.round(),
-      preference: _routePreference,
+      modes: _selectedModes,
+      maximumWalkingMetres: _maximumWalkingDistance,
     );
+    if (validationError != null) {
+      _showMessage(validationError);
+      return;
+    }
+    final selectedOrigin = origin!;
+    final selectedDestination = destination!;
 
-    await _storage.recordSearch(
-      origin: origin,
-      destination: destination,
-    );
-    final recentSearches = await _storage.getRecentSearches();
-    if (!mounted) return;
-    setState(() {
-      _originController.text = origin.name;
-      _destinationController.text = destination.name;
-      _originLocation = origin;
-      _destinationLocation = destination;
-      _routeResults = routes;
-      _recentSearches = recentSearches;
-      _searching = false;
-    });
+    setState(() => _searching = true);
 
-    if (routes.isEmpty) {
-      _showMessage(
-        'No route matches these filters. Try more modes or a longer walking distance.',
+    // Allow Flutter to draw the loading indicator before route calculation.
+    await Future<void>.delayed(Duration.zero);
+
+    try {
+      await _repository.ensureDataForJourney(
+        selectedOrigin,
+        selectedDestination,
       );
-    } else {
-      await _showRouteResults();
+      final routes = _repository.findJourneys(
+        origin: selectedOrigin,
+        destination: selectedDestination,
+        requestedTime: requestedTime,
+        departAt: _departAt,
+        selectedModes: _selectedModes,
+        accessibleOnly: _accessibleOnly,
+        fewerTransfers: _fewerTransfers,
+        maximumWalkingMetres: _maximumWalkingDistance.round(),
+        preference: _routePreference,
+      );
+
+      await _storage.recordSearch(
+        origin: selectedOrigin,
+        destination: selectedDestination,
+      );
+      final recentSearches = await _storage.getRecentSearches();
+      if (!mounted) return;
+      setState(() {
+        _originController.text = selectedOrigin.name;
+        _destinationController.text = selectedDestination.name;
+        _originLocation = selectedOrigin;
+        _destinationLocation = selectedDestination;
+        _routeResults = routes;
+        _recentSearches = recentSearches;
+      });
+
+      if (routes.isEmpty) {
+        _showMessage(
+          'No route matches these filters. Try more modes or a longer walking distance.',
+        );
+      } else {
+        await _showRouteResults();
+      }
+    } catch (error) {
+      if (mounted) _showMessage('Unable to calculate this route: $error');
+    } finally {
+      if (mounted) setState(() => _searching = false);
     }
   }
 
@@ -880,7 +906,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   }
 
   Widget _buildTransportModes() {
-    const modes = ['Bus', 'MRT', 'LRT', 'KTM', 'Monorail'];
+    const modes = ['Bus', 'MRT', 'LRT', 'KTM', 'Monorail', 'Ferry'];
     return Wrap(
       spacing: 10,
       runSpacing: 10,
@@ -1322,14 +1348,24 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
                   onPressed: () {
                     final selectedOrigin = originLocation;
                     final selectedDestination = destinationLocation;
-                    if (selectedOrigin == null || selectedDestination == null) {
+                    final validationError = InputValidator.journey(
+                      origin: selectedOrigin,
+                      destination: selectedDestination,
+                      requestedTime: departure,
+                      modes: const {'Bus'},
+                      maximumWalkingMetres: 2000,
+                    );
+                    if (validationError != null) {
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(
+                        SnackBar(content: Text(validationError)),
+                      );
                       return;
                     }
                     Navigator.pop(
                       dialogContext,
                       journey.copyWith(
-                        origin: selectedOrigin.name,
-                        destination: selectedDestination.name,
+                        origin: selectedOrigin!.name,
+                        destination: selectedDestination!.name,
                         originLatitude: selectedOrigin.latitude,
                         originLongitude: selectedOrigin.longitude,
                         destinationLatitude: selectedDestination.latitude,
@@ -1534,6 +1570,19 @@ class JourneyRouteMap extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final allStops = option.legs.expand((leg) => leg.stops).toList();
+    final markerStops = <TransitStop>[];
+    const maximumMapMarkers = 35;
+    if (allStops.length <= maximumMapMarkers) {
+      markerStops.addAll(allStops);
+    } else {
+      final step = (allStops.length / maximumMapMarkers).ceil();
+      for (var index = 0; index < allStops.length; index += step) {
+        markerStops.add(allStops[index]);
+      }
+      if (markerStops.last.id != allStops.last.id) {
+        markerStops.add(allStops.last);
+      }
+    }
     double totalLatitude = option.origin.latitude + option.destination.latitude;
     double totalLongitude =
         option.origin.longitude + option.destination.longitude;
@@ -1564,6 +1613,7 @@ class JourneyRouteMap extends StatelessWidget {
             maxZoom: 19,
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
             userAgentPackageName: 'my.edu.tarumt.smart_tublic_transport_system',
+            panBuffer: 0,
           ),
           PolylineLayer(
             polylines: [
@@ -1604,7 +1654,7 @@ class JourneyRouteMap extends StatelessWidget {
           ),
           MarkerLayer(
             markers: [
-              for (final stop in allStops)
+              for (final stop in markerStops)
                 Marker(
                   width: 32,
                   height: 32,
@@ -1694,6 +1744,8 @@ IconData _modeIcon(String mode) {
       return Icons.train;
     case 'Monorail':
       return Icons.commute;
+    case 'Ferry':
+      return Icons.directions_boat;
     default:
       return Icons.directions_transit;
   }
@@ -1711,6 +1763,8 @@ Color _modeColour(String mode) {
       return AppTheme.primaryBlue;
     case 'Monorail':
       return const Color(0xFF7B1FA2);
+    case 'Ferry':
+      return const Color(0xFF00897B);
     default:
       return AppTheme.secondaryText;
   }
