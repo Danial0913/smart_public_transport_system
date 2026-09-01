@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../data/geocoding_service.dart';
+import '../data/input_validator.dart';
 import '../data/location_service.dart';
 import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
@@ -28,22 +31,13 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
   final GeocodingService _geocodingService = GeocodingService();
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
+  Timer? _mapMoveDebounce;
   LatLng? _selectedPoint;
   String? _selectedName;
+  TransitStop? _nearestStop;
+  List<TransitStop> _visibleMapStops = [];
   bool _searching = false;
   bool _findingName = false;
-
-  List<TransitStop> get _mapStops {
-    const maximumMarkers = 500;
-    if (widget.stops.length <= maximumMarkers) return widget.stops;
-
-    final step = (widget.stops.length / maximumMarkers).ceil();
-    final visibleStops = <TransitStop>[];
-    for (var index = 0; index < widget.stops.length; index += step) {
-      visibleStops.add(widget.stops[index]);
-    }
-    return visibleStops;
-  }
 
   @override
   void initState() {
@@ -64,6 +58,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
 
   @override
   void dispose() {
+    _mapMoveDebounce?.cancel();
     _searchController.dispose();
     _mapController.dispose();
     super.dispose();
@@ -81,9 +76,11 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
       );
       return;
     }
+    final nearestStop = _findNearestStop(point);
     setState(() {
       _selectedPoint = point;
       _selectedName = name;
+      _nearestStop = nearestStop;
       _findingName = name == null;
     });
 
@@ -95,7 +92,6 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
     );
     if (!mounted || _selectedPoint != point) return;
 
-    final nearestStop = _findNearestStop(point);
     setState(() {
       _selectedName = placeName ??
           (nearestStop == null
@@ -106,12 +102,18 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
   }
 
   Future<void> _searchForLocation() async {
-    if (_searching || _searchController.text.trim().isEmpty) return;
+    if (_searching) return;
+    final query = _searchController.text.trim();
+    final validationError = InputValidator.locationSearch(query);
+    if (validationError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(validationError)),
+      );
+      return;
+    }
     setState(() => _searching = true);
 
-    final location = await _geocodingService.searchLocation(
-      _searchController.text,
-    );
+    final location = await _geocodingService.searchLocation(query);
     if (!mounted) return;
 
     setState(() => _searching = false);
@@ -146,6 +148,45 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
     return nearestStop;
   }
 
+  void _onMapReady() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _refreshVisibleStops(_mapController.camera);
+    });
+  }
+
+  void _onMapPositionChanged(MapCamera camera, bool hasGesture) {
+    _mapMoveDebounce?.cancel();
+    _mapMoveDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) _refreshVisibleStops(camera);
+    });
+  }
+
+  void _refreshVisibleStops(MapCamera camera) {
+    final zoom = camera.zoom;
+    if (zoom < 9) {
+      setState(() => _visibleMapStops = []);
+      return;
+    }
+
+    final maximumMarkers = zoom < 11
+        ? 60
+        : zoom < 13
+        ? 120
+        : 220;
+    final bounds = camera.visibleBounds;
+    final visibleStops = <TransitStop>[];
+
+    for (final stop in widget.stops) {
+      if (bounds.contains(LatLng(stop.latitude, stop.longitude))) {
+        visibleStops.add(stop);
+        if (visibleStops.length >= maximumMarkers) break;
+      }
+    }
+
+    setState(() => _visibleMapStops = visibleStops);
+  }
+
   void _returnSelectedLocation() {
     final point = _selectedPoint;
     if (point == null) return;
@@ -175,8 +216,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
         ? const LatLng(5.4141, 100.3288)
         : LatLng(initialLocation.latitude, initialLocation.longitude);
     final selectedPoint = _selectedPoint;
-    final nearestStop =
-        selectedPoint == null ? null : _findNearestStop(selectedPoint);
+    final nearestStop = _nearestStop;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -228,6 +268,8 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
                     options: MapOptions(
                       initialCenter: initialCentre,
                       initialZoom: initialLocation == null ? 11 : 14,
+                      onMapReady: _onMapReady,
+                      onPositionChanged: _onMapPositionChanged,
                       onTap: (_, point) => _selectPoint(point),
                     ),
                     children: [
@@ -237,10 +279,11 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
                             'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                         userAgentPackageName:
                             'my.edu.tarumt.smart_tublic_transport_system',
+                        panBuffer: 0,
                       ),
                       MarkerLayer(
                         markers: [
-                          for (final stop in _mapStops)
+                          for (final stop in _visibleMapStops)
                             Marker(
                               width: 38,
                               height: 38,

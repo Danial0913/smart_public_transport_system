@@ -20,7 +20,7 @@ class LocalStorageService {
 
     _database = await openDatabase(
       databasePath,
-      version: 2,
+      version: 3,
       onConfigure: (database) async {
         await database.execute('PRAGMA foreign_keys = ON');
       },
@@ -84,6 +84,13 @@ class LocalStorageService {
             last_used_at TEXT NOT NULL
           )
         ''');
+        await database.execute('''
+          CREATE TABLE gtfs_cache(
+            feed_id TEXT PRIMARY KEY,
+            json_data TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        ''');
 
         final now = DateTime.now();
         await database.insert('favourite_categories', {
@@ -125,6 +132,15 @@ class LocalStorageService {
           await database.execute(
             'ALTER TABLE recent_searches ADD COLUMN destination_longitude REAL',
           );
+        }
+        if (oldVersion < 3) {
+          await database.execute('''
+            CREATE TABLE gtfs_cache(
+              feed_id TEXT PRIMARY KEY,
+              json_data TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+          ''');
         }
       },
     );
@@ -398,6 +414,30 @@ class LocalStorageService {
         lastUsedAt: DateTime.parse(row['last_used_at'] as String),
       );
     }).toList();
+  }
+
+  Future<Map<String, Object?>?> getGtfsCache(String feedId) async {
+    final database = await _db;
+    final rows = await database.query(
+      'gtfs_cache',
+      where: 'feed_id = ?',
+      whereArgs: [feedId],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> saveGtfsCache(String feedId, String jsonData) async {
+    final database = await _db;
+    await database.insert(
+      'gtfs_cache',
+      {
+        'feed_id': feedId,
+        'json_data': jsonData,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   Map<String, Object?> _savedJourneyToDatabaseMap(SavedJourney journey) {

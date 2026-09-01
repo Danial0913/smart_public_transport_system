@@ -31,13 +31,13 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   Timer? _searchDebounce;
   Timer? _mapCameraDebounce;
   LocationData? _currentLocation;
-  LatLngBounds? _visibleMapBounds;
   double _mapZoom = 11;
 
   bool _loading = true;
   bool _trackingLocation = false;
   bool _requestingLocation = false;
   bool _followUserLocation = true;
+  bool _loadingMapArea = false;
 
   String? _error;
   String _selectedMode = 'All';
@@ -51,7 +51,11 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   List<TransitRoute> _routeSuggestions = [];
   List<TransitStop> _allStops = [];
   List<TransitRoute> _allRoutes = [];
+  List<TransitStop> _renderedStops = [];
+  List<Polyline> _renderedPolylines = [];
   final Map<String, List<TransitRoute>> _routesByStopId = {};
+  final Map<String, List<TransitStop>> _routeStopsById = {};
+  final Map<String, List<LatLng>> _routePointsById = {};
   final Map<String, String> _normalisedStopNames = {};
   final Map<String, String> _normalisedRouteNames = {};
   bool _showSuggestions = false;
@@ -108,33 +112,14 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
   Future<void> _loadTransitData() async {
     try {
-      await _repository.load();
-
+      final journey = _activeJourney;
+      await _repository.ensureDataNear(
+        journey?.origin.latitude ?? 5.4145,
+        journey?.origin.longitude ?? 100.3292,
+      );
+      await _refreshTransitCaches();
       if (!mounted) return;
-
-      _allStops = _repository.stops;
-      _allRoutes = _repository.routes;
-      _routesByStopId.clear();
-      _normalisedStopNames.clear();
-      _normalisedRouteNames.clear();
-
-      for (final stop in _allStops) {
-        _normalisedStopNames[stop.id] = _normaliseSearch(stop.name);
-      }
-
-      for (final route in _allRoutes) {
-        _normalisedRouteNames[route.id] = _normaliseSearch(
-          '${route.number} ${route.name}',
-        );
-
-        for (final stopId in route.stopIds) {
-          _routesByStopId.putIfAbsent(stopId, () => []).add(route);
-        }
-      }
-
-      setState(() {
-        _loading = false;
-      });
+      setState(() => _loading = false);
     } catch (error) {
       if (!mounted) return;
 
@@ -143,6 +128,65 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
         _loading = false;
       });
     }
+  }
+
+  Future<void> _refreshTransitCaches() async {
+    final allStops = _repository.stops;
+    final allRoutes = _repository.routes;
+    final routesByStopId = <String, List<TransitRoute>>{};
+    final routeStopsById = <String, List<TransitStop>>{};
+    final routePointsById = <String, List<LatLng>>{};
+    final normalisedStopNames = <String, String>{};
+    final normalisedRouteNames = <String, String>{};
+
+    for (var index = 0; index < allStops.length; index++) {
+      final stop = allStops[index];
+      normalisedStopNames[stop.id] = _normaliseSearch(stop.name);
+      if (index > 0 && index % 1000 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    for (var index = 0; index < allRoutes.length; index++) {
+      final route = allRoutes[index];
+      normalisedRouteNames[route.id] = _normaliseSearch(
+        '${route.number} ${route.name}',
+      );
+
+      for (final stopId in route.stopIds) {
+        routesByStopId.putIfAbsent(stopId, () => []).add(route);
+      }
+
+      final routeStops = _repository.stopsForRoute(route);
+      routeStopsById[route.id] = routeStops;
+      routePointsById[route.id] = routeStops.map((stop) {
+        return LatLng(stop.latitude, stop.longitude);
+      }).toList();
+      if (index > 0 && index % 100 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _allStops = allStops;
+      _allRoutes = allRoutes;
+      _routesByStopId
+        ..clear()
+        ..addAll(routesByStopId);
+      _routeStopsById
+        ..clear()
+        ..addAll(routeStopsById);
+      _routePointsById
+        ..clear()
+        ..addAll(routePointsById);
+      _normalisedStopNames
+        ..clear()
+        ..addAll(normalisedStopNames);
+      _normalisedRouteNames
+        ..clear()
+        ..addAll(normalisedRouteNames);
+    });
   }
 
   List<TransitRoute> get _filteredRoutes {
@@ -172,61 +216,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     return _filteredRoutes;
   }
 
-  List<TransitStop> get _visibleStops {
-    final journey = _activeJourney;
-    if (journey != null) {
-      final stopsById = <String, TransitStop>{};
-      for (final leg in journey.legs) {
-        for (final stop in leg.stops) {
-          stopsById[stop.id] = stop;
-        }
-      }
-      return stopsById.values.toList();
-    }
-
-    final stopIds = _displayedRoutes.expand((route) => route.stopIds).toSet();
-
-    return _allStops.where((stop) {
-      return stopIds.contains(stop.id);
-    }).toList();
-  }
-
-  List<TransitStop> get _renderedStops {
-    if (_activeJourney != null) {
-      return [];
-    }
-
-    if (_selectedRoute != null) {
-      return _repository.stopsForRoute(_selectedRoute!);
-    }
-
-    final bounds = _visibleMapBounds;
-    if (bounds == null || _mapZoom < 8.5) {
-      return _selectedStop == null ? [] : [_selectedStop!];
-    }
-
-    final maximumMarkers = _mapZoom < 10
-        ? 250
-        : _mapZoom < 12
-        ? 600
-        : 1200;
-    final stops = <TransitStop>[];
-
-    for (final stop in _visibleStops) {
-      if (bounds.contains(LatLng(stop.latitude, stop.longitude))) {
-        stops.add(stop);
-        if (stops.length == maximumMarkers) break;
-      }
-    }
-
-    final selectedStop = _selectedStop;
-    if (selectedStop != null &&
-        !stops.any((stop) => stop.id == selectedStop.id)) {
-      stops.add(selectedStop);
-    }
-
-    return stops;
-  }
 
   List<TransitRoute> _routesForStop(TransitStop stop) {
     return _routesByStopId[stop.id] ?? const <TransitRoute>[];
@@ -349,10 +338,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
       _mapReady = true;
       final camera = _mapController.camera;
-      setState(() {
-        _visibleMapBounds = camera.visibleBounds;
-        _mapZoom = camera.zoom;
-      });
+      _refreshVisibleMapContent(camera);
 
       final journey = _activeJourney;
       if (journey != null) {
@@ -363,14 +349,153 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
   void _onMapPositionChanged(MapCamera camera, bool hasGesture) {
     _mapCameraDebounce?.cancel();
-    _mapCameraDebounce = Timer(const Duration(milliseconds: 150), () {
+    _mapCameraDebounce = Timer(const Duration(milliseconds: 350), () async {
+      if (!mounted || _loadingMapArea) return;
+      _loadingMapArea = true;
+      try {
+        final added = await _repository.ensureDataNear(
+          camera.center.latitude,
+          camera.center.longitude,
+        );
+        if (added) await _refreshTransitCaches();
+      } catch (_) {
+        // Keep showing cached map data when the network is unavailable.
+      } finally {
+        _loadingMapArea = false;
+      }
       if (!mounted) return;
-
-      setState(() {
-        _visibleMapBounds = camera.visibleBounds;
-        _mapZoom = camera.zoom;
-      });
+      final latestCamera = _mapController.camera;
+      final movedToAnotherArea =
+          (latestCamera.center.latitude - camera.center.latitude).abs() > 0.1 ||
+          (latestCamera.center.longitude - camera.center.longitude).abs() > 0.1;
+      if (movedToAnotherArea) {
+        _onMapPositionChanged(latestCamera, true);
+      } else {
+        _refreshVisibleMapContent(latestCamera);
+      }
     });
+  }
+
+  void _refreshVisibleMapContent(MapCamera camera) {
+    final bounds = camera.visibleBounds;
+    final zoom = camera.zoom;
+    final journey = _activeJourney;
+    final selectedRoute = _selectedRoute;
+    final stops = <TransitStop>[];
+    final polylines = <Polyline>[];
+
+    if (journey != null && journey.legs.isNotEmpty) {
+      final firstLeg = journey.legs.first;
+      final lastLeg = journey.legs.last;
+
+      _addWalkingPolyline(
+        polylines,
+        LatLng(journey.origin.latitude, journey.origin.longitude),
+        LatLng(firstLeg.from.latitude, firstLeg.from.longitude),
+      );
+
+      for (var index = 0; index < journey.legs.length; index++) {
+        final leg = journey.legs[index];
+        polylines.add(
+          Polyline(
+            points: leg.stops.map((stop) {
+              return LatLng(stop.latitude, stop.longitude);
+            }).toList(),
+            color: _routeColour(leg.route.colourHex),
+            strokeWidth: 6,
+          ),
+        );
+
+        if (index < journey.legs.length - 1) {
+          final nextLeg = journey.legs[index + 1];
+          _addWalkingPolyline(
+            polylines,
+            LatLng(leg.to.latitude, leg.to.longitude),
+            LatLng(nextLeg.from.latitude, nextLeg.from.longitude),
+          );
+        }
+      }
+
+      _addWalkingPolyline(
+        polylines,
+        LatLng(lastLeg.to.latitude, lastLeg.to.longitude),
+        LatLng(journey.destination.latitude, journey.destination.longitude),
+      );
+    } else if (selectedRoute != null) {
+      final routeStops =
+          _routeStopsById[selectedRoute.id] ?? const <TransitStop>[];
+      stops.addAll(_sampleStops(routeStops, 80));
+      polylines.add(_polylineForRoute(selectedRoute, selected: true));
+    } else if (zoom >= 8.5) {
+      final maximumRoutes = zoom < 10
+          ? 35
+          : zoom < 12
+          ? 60
+          : 90;
+      final maximumMarkers = zoom < 10
+          ? 60
+          : zoom < 12
+          ? 120
+          : 220;
+      final visibleRoutes = <TransitRoute>[];
+
+      for (final route in _displayedRoutes) {
+        final points = _routePointsById[route.id] ?? const <LatLng>[];
+        if (points.any(bounds.contains)) {
+          visibleRoutes.add(route);
+          if (visibleRoutes.length >= maximumRoutes) break;
+        }
+      }
+
+      final visibleRouteIds = visibleRoutes.map((route) => route.id).toSet();
+      for (final stop in _allStops) {
+        if (!bounds.contains(LatLng(stop.latitude, stop.longitude))) continue;
+        final stopRoutes = _routesByStopId[stop.id] ?? const <TransitRoute>[];
+        if (stopRoutes.any((route) => visibleRouteIds.contains(route.id))) {
+          stops.add(stop);
+          if (stops.length >= maximumMarkers) break;
+        }
+      }
+
+      for (final route in visibleRoutes) {
+        polylines.add(_polylineForRoute(route));
+      }
+    }
+
+    final selectedStop = _selectedStop;
+    if (selectedStop != null &&
+        !stops.any((stop) => stop.id == selectedStop.id)) {
+      stops.add(selectedStop);
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _mapZoom = zoom;
+      _renderedStops = stops;
+      _renderedPolylines = polylines;
+    });
+  }
+
+  Polyline _polylineForRoute(TransitRoute route, {bool selected = false}) {
+    return Polyline(
+      points: _routePointsById[route.id] ?? const <LatLng>[],
+      color: _routeColour(route.colourHex).withValues(
+        alpha: selected ? 1 : 0.65,
+      ),
+      strokeWidth: selected ? 6 : 4,
+    );
+  }
+
+  List<TransitStop> _sampleStops(List<TransitStop> stops, int maximum) {
+    if (stops.length <= maximum) return List<TransitStop>.from(stops);
+
+    final sampled = <TransitStop>[];
+    final step = (stops.length / maximum).ceil();
+    for (var index = 0; index < stops.length; index += step) {
+      sampled.add(stops[index]);
+    }
+    if (sampled.last.id != stops.last.id) sampled.add(stops.last);
+    return sampled;
   }
 
   void _focusJourney(JourneyOption journey) {
@@ -470,6 +595,9 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       _selectedRoute = null;
       _selectedStop = null;
     });
+    if (_mapReady) {
+      _refreshVisibleMapContent(_mapController.camera);
+    }
   }
 
   Future<bool> _prepareLocationService() async {
@@ -515,8 +643,8 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
       await _location.changeSettings(
         accuracy: LocationAccuracy.high,
-        interval: 1000,
-        distanceFilter: 5,
+        interval: 2000,
+        distanceFilter: 10,
       );
 
       final firstLocation = await _location.getLocation();
@@ -742,7 +870,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
               child: FilterChip(
                 label: Text(mode),
                 selected: isSelected,
-                selectedColor: AppTheme.primaryBlue.withOpacity(0.15),
+                selectedColor: AppTheme.primaryBlue.withValues(alpha: 0.15),
                 checkmarkColor: AppTheme.primaryBlue,
                 side: BorderSide(
                   color: isSelected ? AppTheme.primaryBlue : AppTheme.border,
@@ -818,8 +946,9 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
               userAgentPackageName:
                   'my.edu.tarumt.smart_tublic_transport_system',
               maxZoom: 19,
+              panBuffer: 0,
             ),
-            PolylineLayer(polylines: _buildRoutePolylines()),
+            PolylineLayer(polylines: _renderedPolylines),
             MarkerLayer(markers: _renderedStops.map(_buildStopMarker).toList()),
             MarkerLayer(markers: _buildJourneyStationMarkers()),
             MarkerLayer(markers: _buildJourneyEndpointMarkers()),
@@ -931,65 +1060,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
           ),
       ],
     );
-  }
-
-  List<Polyline> _buildRoutePolylines() {
-    final journey = _activeJourney;
-    if (journey != null) {
-      final polylines = <Polyline>[];
-      final firstLeg = journey.legs.first;
-      final lastLeg = journey.legs.last;
-
-      _addWalkingPolyline(
-        polylines,
-        LatLng(journey.origin.latitude, journey.origin.longitude),
-        LatLng(firstLeg.from.latitude, firstLeg.from.longitude),
-      );
-
-      for (int index = 0; index < journey.legs.length; index++) {
-        final leg = journey.legs[index];
-        polylines.add(
-          Polyline(
-            points: leg.stops.map((stop) {
-              return LatLng(stop.latitude, stop.longitude);
-            }).toList(),
-            color: _routeColour(leg.route.colourHex),
-            strokeWidth: 6,
-          ),
-        );
-
-        if (index < journey.legs.length - 1) {
-          final nextLeg = journey.legs[index + 1];
-          _addWalkingPolyline(
-            polylines,
-            LatLng(leg.to.latitude, leg.to.longitude),
-            LatLng(nextLeg.from.latitude, nextLeg.from.longitude),
-          );
-        }
-      }
-
-      _addWalkingPolyline(
-        polylines,
-        LatLng(lastLeg.to.latitude, lastLeg.to.longitude),
-        LatLng(journey.destination.latitude, journey.destination.longitude),
-      );
-
-      return polylines;
-    }
-
-    return _displayedRoutes.map((route) {
-      final stops = _repository.stopsForRoute(route);
-
-      return Polyline(
-        points: stops.map((stop) {
-          return LatLng(stop.latitude, stop.longitude);
-        }).toList(),
-        color: _routeColour(
-          route.colourHex,
-        ).withOpacity(_selectedRoute == null ? 0.65 : 1),
-        strokeWidth: _selectedRoute == null ? 4 : 6,
-      );
-    }).toList();
   }
 
   void _addWalkingPolyline(List<Polyline> polylines, LatLng from, LatLng to) {
@@ -1302,7 +1372,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    color: AppTheme.primaryBlue.withOpacity(0.12),
+                    color: AppTheme.primaryBlue.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Icon(
@@ -1468,9 +1538,9 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: colour.withOpacity(0.10),
+        color: colour.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: colour.withOpacity(0.35)),
+        border: Border.all(color: colour.withValues(alpha: 0.35)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1506,7 +1576,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    color: _colourForModes(modes).withOpacity(0.12),
+                    color: _colourForModes(modes).withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
@@ -1602,7 +1672,9 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    color: _routeColour(route.colourHex).withOpacity(0.12),
+                    color: _routeColour(
+                      route.colourHex,
+                    ).withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
@@ -1702,7 +1774,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: AppTheme.primaryBlue.withOpacity(0.07),
+        color: AppTheme.primaryBlue.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Column(
@@ -1824,7 +1896,7 @@ class CurrentUserLocationMarker extends StatelessWidget {
           width: 42,
           height: 42,
           decoration: BoxDecoration(
-            color: AppTheme.primaryBlue.withOpacity(0.20),
+            color: AppTheme.primaryBlue.withValues(alpha: 0.20),
             shape: BoxShape.circle,
           ),
         ),

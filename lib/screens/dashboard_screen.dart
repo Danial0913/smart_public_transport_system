@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/geocoding_service.dart';
+import '../data/input_validator.dart';
 import '../data/local_storage_service.dart';
 import '../data/location_service.dart';
 import '../data/ridership_api_service.dart';
@@ -82,7 +83,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     try {
-      await _repository.load();
       await _storage.initialise();
 
       final categories = await _storage.getFavouriteCategories();
@@ -164,6 +164,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     required String title,
     required bool isOrigin,
   }) async {
+    try {
+      final initialLocation = isOrigin ? _originLocation : _destinationLocation;
+      await _repository.ensureDataNear(
+        initialLocation?.latitude ?? 5.4141,
+        initialLocation?.longitude ?? 100.3288,
+      );
+    } catch (error) {
+      if (mounted) _showMessage('Unable to load transport stops: $error');
+      return;
+    }
+    if (!mounted) return;
     final selectedLocation = await Navigator.push<JourneyLocation>(
       context,
       MaterialPageRoute(
@@ -221,6 +232,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         latitude,
         longitude,
       );
+      await _repository.ensureDataNear(latitude, longitude);
       final nearestStop = _repository.findNearestStop(latitude, longitude);
       if (!mounted) return;
       final gpsLocation = JourneyLocation(
@@ -289,6 +301,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       },
     );
     if (type == null || !mounted) return;
+
+    if (type == 'Route' || type == 'Stop') {
+      try {
+        await _repository.ensureDataNear(5.4141, 100.3288);
+      } catch (error) {
+        if (mounted) _showMessage('Unable to load transport data: $error');
+        return;
+      }
+      if (!mounted) return;
+    }
 
     final choices = <_FavouriteChoice>[];
     if (type == 'Route') {
@@ -468,26 +490,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
             ),
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: [
-          _buildHomePage(),
-          JourneyPlannerScreen(
-            key: _plannerKey,
-            initialOrigin: _originController.text,
-            initialDestination: _destinationController.text,
-            initialOriginLocation: _originLocation,
-            initialDestinationLocation: _destinationLocation,
-            onStartJourney: _openJourneyOnMap,
-          ),
-          TransitMapScreen(
-            key: _mapKey,
-            journey: _activeJourney,
-          ),
-          const TravelHistoryScreen(),
-          const ProfileScreen(),
-        ],
-      ),
+      // Only create the screen that the user opens. This prevents the map,
+      // planner and history screens from loading while they are hidden.
+      body: _buildSelectedPage(),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: _changePage,
@@ -520,6 +525,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildSelectedPage() {
+    switch (_selectedIndex) {
+      case 1:
+        return JourneyPlannerScreen(
+          key: _plannerKey,
+          initialOrigin: _originController.text,
+          initialDestination: _destinationController.text,
+          initialOriginLocation: _originLocation,
+          initialDestinationLocation: _destinationLocation,
+          onStartJourney: _openJourneyOnMap,
+        );
+      case 2:
+        return TransitMapScreen(
+          key: _mapKey,
+          journey: _activeJourney,
+        );
+      case 3:
+        return const TravelHistoryScreen();
+      case 4:
+        return const ProfileScreen();
+      default:
+        return _buildHomePage();
+    }
   }
 
   PreferredSizeWidget _buildHomeAppBar() {
@@ -1435,9 +1465,14 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
       },
     );
     controller.dispose();
-    if (name == null || name.isEmpty) return;
+    if (name == null) return;
+    final validationError = InputValidator.categoryName(name, _categories);
+    if (validationError != null) {
+      _showMessage(validationError);
+      return;
+    }
     await _storage.addFavouriteCategory(
-      name: name,
+      name: name.trim(),
       colourValue: 0xFF7B1FA2,
     );
     await _fetchFavourites();
@@ -1471,8 +1506,19 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
       },
     );
     controller.dispose();
-    if (name == null || name.isEmpty) return;
-    await _storage.updateFavouriteCategory(category.copyWith(name: name));
+    if (name == null) return;
+    final validationError = InputValidator.categoryName(
+      name,
+      _categories,
+      ignoredId: category.id,
+    );
+    if (validationError != null) {
+      _showMessage(validationError);
+      return;
+    }
+    await _storage.updateFavouriteCategory(
+      category.copyWith(name: name.trim()),
+    );
     await _fetchFavourites();
   }
 
@@ -1481,6 +1527,26 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
       _showMessage('At least one category is required.');
       return;
     }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete Category?'),
+        content: Text(
+          'Delete ${category.name}? Its favourites will move to another category.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     await _storage.deleteFavouriteCategory(category.id);
     await _fetchFavourites();
   }
@@ -1649,6 +1715,7 @@ IconData _modeIcon(String mode) {
   if (mode == 'LRT') return Icons.tram;
   if (mode == 'KTM') return Icons.train;
   if (mode == 'Monorail') return Icons.commute;
+  if (mode == 'Ferry') return Icons.directions_boat;
   return Icons.directions_transit;
 }
 
