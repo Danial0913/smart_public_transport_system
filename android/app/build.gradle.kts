@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "my.edu.tarumt.smart_tublic_transport_system"
+    namespace = "my.edu.tarumt.smart_public_transport_system"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -16,7 +16,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "my.edu.tarumt.smart_tublic_transport_system"
+        applicationId = "my.edu.tarumt.smart_public_transport_system"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
