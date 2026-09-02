@@ -1784,7 +1784,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     );
   }
 
-  // Build the selected route information panel
+  // selected route information panel
   Widget _buildRouteInformation(TransitRoute route) {
     final stops = _repository.stopsForRoute(route);
     final firstStop = stops.isEmpty ? 'Unknown' : stops.first.name;
