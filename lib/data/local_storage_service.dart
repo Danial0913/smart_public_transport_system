@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
 
@@ -20,7 +22,7 @@ class LocalStorageService {
 
     _database = await openDatabase(
       databasePath,
-      version: 3,
+      version: 7,
       onConfigure: (database) async {
         await database.execute('PRAGMA foreign_keys = ON');
       },
@@ -58,6 +60,16 @@ class LocalStorageService {
             departure_time TEXT NOT NULL,
             duration_minutes INTEGER NOT NULL,
             fare REAL NOT NULL,
+            known_fare REAL,
+            route_ids TEXT NOT NULL DEFAULT '[]',
+            modes TEXT NOT NULL DEFAULT '[]',
+            preference TEXT NOT NULL DEFAULT 'Recommended',
+            depart_at INTEGER NOT NULL DEFAULT 1,
+            maximum_walking_metres INTEGER NOT NULL DEFAULT 2000,
+            accessible_only INTEGER NOT NULL DEFAULT 0,
+            fewer_transfers INTEGER NOT NULL DEFAULT 0,
+            walking_metres INTEGER NOT NULL DEFAULT 0,
+            transfer_count INTEGER NOT NULL DEFAULT 0,
             saved_at TEXT NOT NULL
           )
         ''');
@@ -70,6 +82,8 @@ class LocalStorageService {
             origin_longitude REAL,
             destination_latitude REAL,
             destination_longitude REAL,
+            requested_time TEXT,
+            preference TEXT,
             searched_at TEXT NOT NULL,
             UNIQUE(origin, destination)
           )
@@ -84,14 +98,10 @@ class LocalStorageService {
             last_used_at TEXT NOT NULL
           )
         ''');
-        await database.execute('''
-          CREATE TABLE gtfs_cache(
-            feed_id TEXT PRIMARY KEY,
-            json_data TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-          )
-        ''');
-
+        await database.execute(
+          'CREATE UNIQUE INDEX favourites_reference_unique '
+          'ON favourites(type, reference_id)',
+        );
         final now = DateTime.now();
         await database.insert('favourite_categories', {
           'id': 'category-personal',
@@ -103,7 +113,9 @@ class LocalStorageService {
           'id': 'category-daily',
           'name': 'Daily Travel',
           'colour_value': 0xFF00897B,
-          'created_at': now.add(const Duration(microseconds: 1)).toIso8601String(),
+          'created_at': now
+              .add(const Duration(microseconds: 1))
+              .toIso8601String(),
         });
       },
       onUpgrade: (database, oldVersion, newVersion) async {
@@ -133,14 +145,61 @@ class LocalStorageService {
             'ALTER TABLE recent_searches ADD COLUMN destination_longitude REAL',
           );
         }
-        if (oldVersion < 3) {
+        if (oldVersion < 4) {
+          await database.execute(
+            'ALTER TABLE saved_journeys ADD COLUMN known_fare REAL',
+          );
+          await database.execute(
+            "ALTER TABLE saved_journeys ADD COLUMN route_ids TEXT NOT NULL DEFAULT '[]'",
+          );
+          await database.execute(
+            "ALTER TABLE saved_journeys ADD COLUMN modes TEXT NOT NULL DEFAULT '[]'",
+          );
+          await database.execute(
+            "ALTER TABLE saved_journeys ADD COLUMN preference TEXT NOT NULL DEFAULT 'Recommended'",
+          );
+          await database.execute(
+            'ALTER TABLE saved_journeys ADD COLUMN depart_at INTEGER NOT NULL DEFAULT 1',
+          );
+          await database.execute(
+            'ALTER TABLE saved_journeys ADD COLUMN maximum_walking_metres INTEGER NOT NULL DEFAULT 2000',
+          );
+          await database.execute(
+            'ALTER TABLE saved_journeys ADD COLUMN accessible_only INTEGER NOT NULL DEFAULT 0',
+          );
+          await database.execute(
+            'ALTER TABLE saved_journeys ADD COLUMN fewer_transfers INTEGER NOT NULL DEFAULT 0',
+          );
+          await database.execute(
+            'ALTER TABLE saved_journeys ADD COLUMN walking_metres INTEGER NOT NULL DEFAULT 0',
+          );
+          await database.execute(
+            'ALTER TABLE saved_journeys ADD COLUMN transfer_count INTEGER NOT NULL DEFAULT 0',
+          );
+          await database.execute(
+            'ALTER TABLE recent_searches ADD COLUMN requested_time TEXT',
+          );
+          await database.execute(
+            'ALTER TABLE recent_searches ADD COLUMN preference TEXT',
+          );
+        }
+        if (oldVersion < 5) {
           await database.execute('''
-            CREATE TABLE gtfs_cache(
-              feed_id TEXT PRIMARY KEY,
-              json_data TEXT NOT NULL,
-              updated_at TEXT NOT NULL
+            DELETE FROM favourites
+            WHERE rowid NOT IN (
+              SELECT MAX(rowid) FROM favourites GROUP BY type, reference_id
             )
           ''');
+          await database.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS favourites_reference_unique '
+            'ON favourites(type, reference_id)',
+          );
+        }
+        if (oldVersion < 7) {
+          // GTFS snapshots are bundled JSON assets now, so downloaded cache
+          // rows are obsolete and only consume device storage.
+          await database.execute('DROP TABLE IF EXISTS gtfs_cache_chunks');
+          await database.execute('DROP TABLE IF EXISTS gtfs_cache');
         }
       },
     );
@@ -151,8 +210,24 @@ class LocalStorageService {
     return _database!;
   }
 
-  Future<void> saveJourney(JourneyOption option) async {
-    await updateSavedJourney(SavedJourney.fromOption(option));
+  Future<void> saveJourney(
+    JourneyOption option, {
+    String preference = 'Recommended',
+    bool departAt = true,
+    int maximumWalkingMetres = 2000,
+    bool accessibleOnly = false,
+    bool fewerTransfers = false,
+  }) async {
+    await updateSavedJourney(
+      SavedJourney.fromOption(
+        option,
+        preference: preference,
+        departAt: departAt,
+        maximumWalkingMetres: maximumWalkingMetres,
+        accessibleOnly: accessibleOnly,
+        fewerTransfers: fewerTransfers,
+      ),
+    );
   }
 
   Future<void> updateSavedJourney(SavedJourney journey) async {
@@ -162,16 +237,6 @@ class LocalStorageService {
       _savedJourneyToDatabaseMap(journey),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
-  }
-
-  Future<SavedJourney> duplicateSavedJourney(SavedJourney journey) async {
-    final duplicated = journey.copyWith(
-      id: '${journey.id}-copy-${DateTime.now().microsecondsSinceEpoch}',
-      departureTime: journey.departureTime.add(const Duration(days: 1)),
-      savedAt: DateTime.now(),
-    );
-    await updateSavedJourney(duplicated);
-    return duplicated;
   }
 
   Future<bool> isJourneySaved(String id) async {
@@ -197,31 +262,46 @@ class LocalStorageService {
 
   Future<void> deleteSavedJourney(String id) async {
     final database = await _db;
-    await database.delete(
-      'saved_journeys',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    await database.transaction((transaction) async {
+      await transaction.delete(
+        'favourites',
+        where: 'type = ? AND reference_id = ?',
+        whereArgs: ['Journey', id],
+      );
+      await transaction.delete(
+        'saved_journeys',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    });
   }
 
   Future<void> recordSearch({
     required JourneyLocation origin,
     required JourneyLocation destination,
+    DateTime? requestedTime,
+    String? preference,
   }) async {
     final database = await _db;
-    await database.insert(
+    await database.delete(
       'recent_searches',
-      {
-        'origin': origin.name.trim(),
-        'destination': destination.name.trim(),
-        'origin_latitude': origin.latitude,
-        'origin_longitude': origin.longitude,
-        'destination_latitude': destination.latitude,
-        'destination_longitude': destination.longitude,
-        'searched_at': DateTime.now().toIso8601String(),
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      where: 'LOWER(TRIM(origin)) = ? AND LOWER(TRIM(destination)) = ?',
+      whereArgs: [
+        origin.name.trim().toLowerCase(),
+        destination.name.trim().toLowerCase(),
+      ],
     );
+    await database.insert('recent_searches', {
+      'origin': origin.name.trim(),
+      'destination': destination.name.trim(),
+      'origin_latitude': origin.latitude,
+      'origin_longitude': origin.longitude,
+      'destination_latitude': destination.latitude,
+      'destination_longitude': destination.longitude,
+      'requested_time': requestedTime?.toIso8601String(),
+      'preference': preference,
+      'searched_at': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
     await database.rawDelete('''
       DELETE FROM recent_searches
       WHERE id NOT IN (
@@ -246,10 +326,13 @@ class LocalStorageService {
         searchedAt: DateTime.parse(row['searched_at'] as String),
         originLatitude: (row['origin_latitude'] as num?)?.toDouble(),
         originLongitude: (row['origin_longitude'] as num?)?.toDouble(),
-        destinationLatitude:
-            (row['destination_latitude'] as num?)?.toDouble(),
-        destinationLongitude:
-            (row['destination_longitude'] as num?)?.toDouble(),
+        destinationLatitude: (row['destination_latitude'] as num?)?.toDouble(),
+        destinationLongitude: (row['destination_longitude'] as num?)
+            ?.toDouble(),
+        requestedTime: DateTime.tryParse(
+          row['requested_time'] as String? ?? '',
+        ),
+        preference: row['preference'] as String?,
       );
     }).toList();
   }
@@ -326,10 +409,27 @@ class LocalStorageService {
 
   Future<void> addFavourite(FavouriteItem favourite) async {
     final database = await _db;
+    if (!const {'Route', 'Stop', 'Journey'}.contains(favourite.type)) {
+      throw ArgumentError.value(
+        favourite.type,
+        'type',
+        'Unsupported favourite',
+      );
+    }
+    final category = await database.query(
+      'favourite_categories',
+      columns: ['id'],
+      where: 'id = ?',
+      whereArgs: [favourite.categoryId],
+      limit: 1,
+    );
+    if (category.isEmpty) {
+      throw StateError('The selected favourite category no longer exists.');
+    }
     await database.insert(
       'favourites',
       _favouriteToDatabaseMap(favourite),
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      conflictAlgorithm: ConflictAlgorithm.abort,
     );
   }
 
@@ -345,11 +445,7 @@ class LocalStorageService {
 
   Future<void> deleteFavourite(String id) async {
     final database = await _db;
-    await database.delete(
-      'favourites',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    await database.delete('favourites', where: 'id = ?', whereArgs: [id]);
   }
 
   Future<List<FavouriteItem>> getFavourites({String? categoryId}) async {
@@ -383,18 +479,14 @@ class LocalStorageService {
       limit: 1,
     );
     final previousCount = rows.isEmpty ? 0 : rows.first['usage_count'] as int;
-    await database.insert(
-      'service_usage',
-      {
-        'route_id': route.id,
-        'route_number': route.number,
-        'route_name': route.name,
-        'mode': route.mode,
-        'usage_count': previousCount + 1,
-        'last_used_at': DateTime.now().toIso8601String(),
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await database.insert('service_usage', {
+      'route_id': route.id,
+      'route_number': route.number,
+      'route_name': route.name,
+      'mode': route.mode,
+      'usage_count': previousCount + 1,
+      'last_used_at': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<List<ServiceUsage>> getFrequentServices({int limit = 4}) async {
@@ -416,30 +508,6 @@ class LocalStorageService {
     }).toList();
   }
 
-  Future<Map<String, Object?>?> getGtfsCache(String feedId) async {
-    final database = await _db;
-    final rows = await database.query(
-      'gtfs_cache',
-      where: 'feed_id = ?',
-      whereArgs: [feedId],
-      limit: 1,
-    );
-    return rows.isEmpty ? null : rows.first;
-  }
-
-  Future<void> saveGtfsCache(String feedId, String jsonData) async {
-    final database = await _db;
-    await database.insert(
-      'gtfs_cache',
-      {
-        'feed_id': feedId,
-        'json_data': jsonData,
-        'updated_at': DateTime.now().toIso8601String(),
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-  }
-
   Map<String, Object?> _savedJourneyToDatabaseMap(SavedJourney journey) {
     return {
       'id': journey.id,
@@ -453,6 +521,16 @@ class LocalStorageService {
       'departure_time': journey.departureTime.toIso8601String(),
       'duration_minutes': journey.durationMinutes,
       'fare': journey.fare,
+      'known_fare': journey.knownFare,
+      'route_ids': jsonEncode(journey.routeIds),
+      'modes': jsonEncode(journey.modes),
+      'preference': journey.preference,
+      'depart_at': journey.departAt ? 1 : 0,
+      'maximum_walking_metres': journey.maximumWalkingMetres,
+      'accessible_only': journey.accessibleOnly ? 1 : 0,
+      'fewer_transfers': journey.fewerTransfers ? 1 : 0,
+      'walking_metres': journey.walkingMetres,
+      'transfer_count': journey.transferCount,
       'saved_at': journey.savedAt.toIso8601String(),
     };
   }
@@ -469,10 +547,18 @@ class LocalStorageService {
       savedAt: DateTime.parse(row['saved_at'] as String),
       originLatitude: (row['origin_latitude'] as num?)?.toDouble(),
       originLongitude: (row['origin_longitude'] as num?)?.toDouble(),
-      destinationLatitude:
-          (row['destination_latitude'] as num?)?.toDouble(),
-      destinationLongitude:
-          (row['destination_longitude'] as num?)?.toDouble(),
+      destinationLatitude: (row['destination_latitude'] as num?)?.toDouble(),
+      destinationLongitude: (row['destination_longitude'] as num?)?.toDouble(),
+      routeIds: _decodeStringList(row['route_ids']),
+      modes: _decodeStringList(row['modes']),
+      preference: row['preference'] as String? ?? 'Recommended',
+      departAt: (row['depart_at'] as int? ?? 1) == 1,
+      maximumWalkingMetres: row['maximum_walking_metres'] as int? ?? 2000,
+      accessibleOnly: (row['accessible_only'] as int? ?? 0) == 1,
+      fewerTransfers: (row['fewer_transfers'] as int? ?? 0) == 1,
+      walkingMetres: row['walking_metres'] as int? ?? 0,
+      transferCount: row['transfer_count'] as int? ?? 0,
+      knownFare: (row['known_fare'] as num?)?.toDouble(),
     );
   }
 
@@ -495,5 +581,14 @@ class LocalStorageService {
       'category_id': favourite.categoryId,
       'created_at': favourite.createdAt.toIso8601String(),
     };
+  }
+
+  List<String> _decodeStringList(Object? value) {
+    if (value is! String || value.isEmpty) return const [];
+    try {
+      return (jsonDecode(value) as List<dynamic>).cast<String>();
+    } catch (_) {
+      return const [];
+    }
   }
 }

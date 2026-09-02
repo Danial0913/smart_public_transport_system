@@ -42,25 +42,19 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   JourneyLocation? _originLocation;
   JourneyLocation? _destinationLocation;
 
-  DateTime _selectedDate = DateTime.now();
-  TimeOfDay _selectedTime = TimeOfDay.now();
+  late DateTime _selectedDate;
+  late TimeOfDay _selectedTime;
   bool _departAt = true;
   bool _accessibleOnly = false;
   bool _fewerTransfers = false;
   bool _loading = true;
   bool _searching = false;
   bool _gettingLocation = false;
+  bool _choosingLocation = false;
   String? _loadError;
   double _maximumWalkingDistance = 2000;
   String _routePreference = 'Recommended';
-  final Set<String> _selectedModes = {
-    'Bus',
-    'MRT',
-    'LRT',
-    'KTM',
-    'Monorail',
-    'Ferry',
-  };
+  final Set<String> _selectedModes = {'Bus', 'MRT', 'LRT', 'KTM', 'Monorail'};
   List<JourneyOption> _routeResults = [];
   List<RecentSearch> _recentSearches = [];
   Set<String> _savedJourneyIds = {};
@@ -68,6 +62,9 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   @override
   void initState() {
     super.initState();
+    final initialDeparture = DateTime.now().add(const Duration(minutes: 5));
+    _selectedDate = DateUtils.dateOnly(initialDeparture);
+    _selectedTime = TimeOfDay.fromDateTime(initialDeparture);
     _originController = TextEditingController(text: widget.initialOrigin);
     _destinationController = TextEditingController(
       text: widget.initialDestination,
@@ -85,12 +82,19 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   }
 
   Future<void> _loadData() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _loadError = null;
+      });
+    }
     try {
       await _repository.load();
       await _storage.initialise();
       _originLocation ??= _locationFromStopName(_originController.text);
-      _destinationLocation ??=
-          _locationFromStopName(_destinationController.text);
+      _destinationLocation ??= _locationFromStopName(
+        _destinationController.text,
+      );
       final recentSearches = await _storage.getRecentSearches();
       final savedJourneys = await _storage.getSavedJourneys();
       if (!mounted) return;
@@ -126,11 +130,13 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   }
 
   Future<void> _selectDate() async {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final currentSelection = DateUtils.dateOnly(_selectedDate);
     final selected = await showDatePicker(
       context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime.now().subtract(const Duration(days: 1)),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDate: currentSelection.isBefore(today) ? today : currentSelection,
+      firstDate: today,
+      lastDate: today.add(const Duration(days: 365)),
     );
     if (selected == null || !mounted) return;
     setState(() => _selectedDate = selected);
@@ -150,41 +156,34 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     required String title,
     required bool isOrigin,
   }) async {
-    final initialLocation = isOrigin
-        ? _originLocation
-        : (_destinationLocation ?? _originLocation);
+    if (_choosingLocation) return;
+    _choosingLocation = true;
     try {
-      await _repository.ensureDataNear(
-        initialLocation?.latitude ?? 5.4141,
-        initialLocation?.longitude ?? 100.3288,
-      );
-    } catch (error) {
-      if (mounted) _showMessage('Unable to load transport stops: $error');
-      return;
-    }
-    if (!mounted) return;
-    final selectedLocation = await Navigator.push<JourneyLocation>(
-      context,
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => SupportedStopMapPicker(
-          title: title,
-          stops: _repository.stops,
-          initialLocation: isOrigin ? _originLocation : _destinationLocation,
+      final selectedLocation = await Navigator.push<JourneyLocation>(
+        context,
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => SupportedStopMapPicker(
+            title: title,
+            stops: _repository.stops,
+            initialLocation: isOrigin ? _originLocation : _destinationLocation,
+          ),
         ),
-      ),
-    );
+      );
 
-    if (selectedLocation == null || !mounted) return;
-    setState(() {
-      controller.text = selectedLocation.name;
-      if (isOrigin) {
-        _originLocation = selectedLocation;
-      } else {
-        _destinationLocation = selectedLocation;
-      }
-      _routeResults = [];
-    });
+      if (selectedLocation == null || !mounted) return;
+      setState(() {
+        controller.text = selectedLocation.name;
+        if (isOrigin) {
+          _originLocation = selectedLocation;
+        } else {
+          _destinationLocation = selectedLocation;
+        }
+        _routeResults = [];
+      });
+    } finally {
+      _choosingLocation = false;
+    }
   }
 
   Future<void> _useGpsForOrigin() async {
@@ -209,9 +208,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       if (!LocationService.isInsideMalaysia(latitude, longitude)) {
         if (mounted) {
           _showMessage(
-            'The emulator GPS is outside Malaysia. Open Emulator Extended '
-            'Controls > Location and set a Penang location, for example '
-            '5.4141, 100.3288, or test with a real phone.',
+            'The reported GPS position is outside Malaysia. Choose a location on the map instead.',
           );
         }
         return;
@@ -221,10 +218,12 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         latitude,
         longitude,
       );
+      await _repository.ensureDataNear(latitude, longitude);
       final nearestStop = _repository.findNearestStop(latitude, longitude);
       if (!mounted) return;
       final gpsLocation = JourneyLocation(
-        name: placeName ??
+        name:
+            placeName ??
             (nearestStop == null
                 ? 'Current location'
                 : 'Near ${nearestStop.name}'),
@@ -291,8 +290,9 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       await _repository.ensureDataForJourney(
         selectedOrigin,
         selectedDestination,
+        selectedModes: _selectedModes,
       );
-      final routes = _repository.findJourneys(
+      var routes = await _repository.findJourneys(
         origin: selectedOrigin,
         destination: selectedDestination,
         requestedTime: requestedTime,
@@ -303,11 +303,30 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         maximumWalkingMetres: _maximumWalkingDistance.round(),
         preference: _routePreference,
       );
+      var usedExpandedWalkingSearch = false;
+      if (routes.isEmpty && _maximumWalkingDistance < 10000) {
+        routes = await _repository.findJourneys(
+          origin: selectedOrigin,
+          destination: selectedDestination,
+          requestedTime: requestedTime,
+          departAt: _departAt,
+          selectedModes: _selectedModes,
+          accessibleOnly: _accessibleOnly,
+          fewerTransfers: _fewerTransfers,
+          maximumWalkingMetres: 10000,
+          preference: _routePreference,
+        );
+        usedExpandedWalkingSearch = routes.isNotEmpty;
+      }
 
-      await _storage.recordSearch(
-        origin: selectedOrigin,
-        destination: selectedDestination,
-      );
+      if (routes.isNotEmpty) {
+        await _storage.recordSearch(
+          origin: selectedOrigin,
+          destination: selectedDestination,
+          requestedTime: requestedTime,
+          preference: _routePreference,
+        );
+      }
       final recentSearches = await _storage.getRecentSearches();
       if (!mounted) return;
       setState(() {
@@ -321,9 +340,14 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
 
       if (routes.isEmpty) {
         _showMessage(
-          'No route matches these filters. Try more modes or a longer walking distance.',
+          'No connected official service was found for these locations and filters.',
         );
       } else {
+        if (usedExpandedWalkingSearch) {
+          _showMessage(
+            'The nearest connected stations are beyond your walking limit; showing the closest available routes.',
+          );
+        }
         await _showRouteResults();
       }
     } catch (error) {
@@ -416,7 +440,14 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     if (isSaved) {
       await _storage.deleteSavedJourney(option.id);
     } else {
-      await _storage.saveJourney(option);
+      await _storage.saveJourney(
+        option,
+        preference: _routePreference,
+        departAt: _departAt,
+        maximumWalkingMetres: _maximumWalkingDistance.round(),
+        accessibleOnly: _accessibleOnly,
+        fewerTransfers: _fewerTransfers,
+      );
     }
     if (!mounted) return;
     setState(() {
@@ -458,12 +489,25 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       setState(() {
         _originController.text = selected.origin;
         _destinationController.text = selected.destination;
-        _originLocation = selected.originLocation ??
-            _locationFromStopName(selected.origin);
-        _destinationLocation = selected.destinationLocation ??
+        _originLocation =
+            selected.originLocation ?? _locationFromStopName(selected.origin);
+        _destinationLocation =
+            selected.destinationLocation ??
             _locationFromStopName(selected.destination);
         _selectedDate = selected.departureTime;
         _selectedTime = TimeOfDay.fromDateTime(selected.departureTime);
+        _routePreference = selected.preference;
+        _departAt = selected.departAt;
+        _maximumWalkingDistance = selected.maximumWalkingMetres
+            .toDouble()
+            .clamp(200, 10000);
+        _accessibleOnly = selected.accessibleOnly;
+        _fewerTransfers = selected.fewerTransfers;
+        if (selected.modes.isNotEmpty) {
+          _selectedModes
+            ..clear()
+            ..addAll(selected.modes.where((mode) => mode != 'Ferry'));
+        }
       });
       await _findRoutes();
     }
@@ -474,97 +518,32 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (bottomSheetContext) {
-        return SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${option.origin.name} to ${option.destination.name}',
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${_formatTime(option.departureTime)} - '
-                  '${_formatTime(option.arrivalTime)}  |  '
-                  '${option.totalDurationMinutes} min  |  '
-                  'RM ${option.totalFare.toStringAsFixed(2)}',
-                  style: const TextStyle(color: AppTheme.secondaryText),
-                ),
-                const SizedBox(height: 16),
-                JourneyRouteMap(option: option),
-                const SizedBox(height: 20),
-                const Text(
-                  'Step-by-step instructions',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 12),
-                for (int index = 0; index < option.directions.length; index++)
-                  _buildDirectionStep(
-                    number: index + 1,
-                    description: option.directions[index],
-                    isLast: index == option.directions.length - 1,
-                  ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () async {
-                          Navigator.pop(bottomSheetContext);
-                          await _toggleSavedJourney(option);
-                        },
-                        icon: Icon(
-                          _savedJourneyIds.contains(option.id)
-                              ? Icons.bookmark_remove_outlined
-                              : Icons.bookmark_add_outlined,
-                        ),
-                        label: Text(
-                          _savedJourneyIds.contains(option.id)
-                              ? 'Remove Plan'
-                              : 'Save Plan',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: () => _startJourney(
-                          bottomSheetContext,
-                          option,
-                        ),
-                        icon: const Icon(Icons.navigation),
-                        label: const Text('Start Journey'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+      builder: (bottomSheetContext) => _JourneyDetailsSheet(
+        option: option,
+        initiallySaved: _savedJourneyIds.contains(option.id),
+        onToggleSaved: () => _toggleSavedJourney(option),
+        onStart: () => _startJourney(bottomSheetContext, option),
+      ),
     );
 
     if (started != true || !mounted) return;
 
     // Close the route-options popup underneath the journey-details popup.
     Navigator.pop(context);
-    widget.onStartJourney?.call(option);
-    _showMessage(
-      'Journey started. ${option.routeSummary} was added to frequent services.',
-    );
+    final openOnMap = widget.onStartJourney;
+    if (openOnMap != null) {
+      openOnMap(option);
+    } else {
+      _showMessage(
+        'Journey started. ${option.routeSummary} was added to frequent services.',
+      );
+    }
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -788,15 +767,28 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
                 avatar: const Icon(Icons.history, size: 16),
                 label: Text('${search.origin} -> ${search.destination}'),
                 onPressed: () {
-                  final originLocation = search.originLocation ??
+                  final originLocation =
+                      search.originLocation ??
                       _locationFromStopName(search.origin);
-                  final destinationLocation = search.destinationLocation ??
+                  final destinationLocation =
+                      search.destinationLocation ??
                       _locationFromStopName(search.destination);
+                  final now = DateTime.now();
+                  final requested =
+                      search.requestedTime != null &&
+                          search.requestedTime!.isAfter(now)
+                      ? search.requestedTime!
+                      : now.add(const Duration(minutes: 5));
                   setState(() {
                     _originController.text = search.origin;
                     _destinationController.text = search.destination;
                     _originLocation = originLocation;
                     _destinationLocation = destinationLocation;
+                    _selectedDate = requested;
+                    _selectedTime = TimeOfDay.fromDateTime(requested);
+                    if (search.preference != null) {
+                      _routePreference = search.preference!;
+                    }
                   });
                   _findRoutes();
                 },
@@ -906,35 +898,47 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   }
 
   Widget _buildTransportModes() {
-    const modes = ['Bus', 'MRT', 'LRT', 'KTM', 'Monorail', 'Ferry'];
-    return Wrap(
-      spacing: 10,
-      runSpacing: 10,
-      children: modes.map((mode) {
-        final selected = _selectedModes.contains(mode);
-        final colour = _modeColour(mode);
-        return FilterChip(
-          avatar: Icon(
-            _modeIcon(mode),
-            size: 19,
-            color: selected ? Colors.white : colour,
-          ),
-          label: Text(mode),
-          selected: selected,
-          showCheckmark: false,
-          selectedColor: colour,
-          labelStyle: TextStyle(
-            color: selected ? Colors.white : AppTheme.mainText,
-            fontWeight: FontWeight.w500,
-          ),
-          onSelected: (value) {
-            setState(() {
-              value ? _selectedModes.add(mode) : _selectedModes.remove(mode);
-              _routeResults = [];
-            });
-          },
-        );
-      }).toList(),
+    const modes = ['Bus', 'MRT', 'LRT', 'KTM', 'Monorail'];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: modes.map((mode) {
+            final selected = _selectedModes.contains(mode);
+            final colour = _modeColour(mode);
+            return FilterChip(
+              avatar: Icon(
+                _modeIcon(mode),
+                size: 19,
+                color: selected ? Colors.white : colour,
+              ),
+              label: Text(mode),
+              selected: selected,
+              showCheckmark: false,
+              selectedColor: colour,
+              labelStyle: TextStyle(
+                color: selected ? Colors.white : AppTheme.mainText,
+                fontWeight: FontWeight.w500,
+              ),
+              onSelected: (value) {
+                setState(() {
+                  value
+                      ? _selectedModes.add(mode)
+                      : _selectedModes.remove(mode);
+                  _routeResults = [];
+                });
+              },
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          'Ferry planning is unavailable because no approved official schedule feed is currently published.',
+          style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
+        ),
+      ],
     );
   }
 
@@ -976,50 +980,50 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
             padding: const EdgeInsets.all(14),
             child: Column(
               children: [
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _accessibleOnly,
-                title: const Text('Accessible routes only'),
-                subtitle: const Text('Use accessible vehicles and stops'),
-                onChanged: (value) {
-                  setState(() {
-                    _accessibleOnly = value;
-                    _routeResults = [];
-                  });
-                },
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _fewerTransfers,
-                title: const Text('Prefer fewer transfers'),
-                subtitle: const Text('Prioritise simpler journeys'),
-                onChanged: (value) {
-                  setState(() {
-                    _fewerTransfers = value;
-                    _routeResults = [];
-                  });
-                },
-              ),
-              const Divider(),
-              Row(
-                children: [
-                  const Expanded(child: Text('Maximum walking distance')),
-                  Text('${_maximumWalkingDistance.round()} m'),
-                ],
-              ),
-              Slider(
-                min: 200,
-                max: 10000,
-                divisions: 49,
-                value: _maximumWalkingDistance,
-                label: '${_maximumWalkingDistance.round()} m',
-                onChanged: (value) {
-                  setState(() {
-                    _maximumWalkingDistance = value;
-                    _routeResults = [];
-                  });
-                },
-              ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _accessibleOnly,
+                  title: const Text('Accessible routes only'),
+                  subtitle: const Text('Use accessible vehicles and stops'),
+                  onChanged: (value) {
+                    setState(() {
+                      _accessibleOnly = value;
+                      _routeResults = [];
+                    });
+                  },
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _fewerTransfers,
+                  title: const Text('Prefer fewer transfers'),
+                  subtitle: const Text('Prioritise simpler journeys'),
+                  onChanged: (value) {
+                    setState(() {
+                      _fewerTransfers = value;
+                      _routeResults = [];
+                    });
+                  },
+                ),
+                const Divider(),
+                Row(
+                  children: [
+                    const Expanded(child: Text('Maximum walking distance')),
+                    Text('${_maximumWalkingDistance.round()} m'),
+                  ],
+                ),
+                Slider(
+                  min: 200,
+                  max: 10000,
+                  divisions: 49,
+                  value: _maximumWalkingDistance,
+                  label: '${_maximumWalkingDistance.round()} m',
+                  onChanged: (value) {
+                    setState(() {
+                      _maximumWalkingDistance = value;
+                      _routeResults = [];
+                    });
+                  },
+                ),
               ],
             ),
           ),
@@ -1051,7 +1055,10 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
             children: [
               if (recommended)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: AppTheme.primaryBlue,
                     borderRadius: BorderRadius.circular(12),
@@ -1085,20 +1092,28 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
             'Arrive ${_formatTime(option.arrivalTime)}',
             style: const TextStyle(color: AppTheme.secondaryText),
           ),
+          if (!option.usesOfficialSchedule) ...[
+            const SizedBox(height: 4),
+            const Text(
+              'Route available · times are estimated because no matching scheduled trip was published.',
+              style: TextStyle(
+                color: Color(0xFFE65100),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           Wrap(
             spacing: 14,
             runSpacing: 8,
             children: [
-              _buildMetric(Icons.schedule, '${option.totalDurationMinutes} min'),
               _buildMetric(
-                Icons.payments_outlined,
-                'RM ${option.totalFare.toStringAsFixed(2)}',
+                Icons.schedule,
+                '${option.totalDurationMinutes} min',
               ),
-              _buildMetric(
-                Icons.directions_walk,
-                '${option.walkingMetres} m',
-              ),
+              _buildMetric(Icons.payments_outlined, _fareText(option)),
+              _buildMetric(Icons.directions_walk, '${option.walkingMetres} m'),
               _buildMetric(
                 Icons.sync_alt,
                 option.transferCount == 0
@@ -1150,17 +1165,141 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       ],
     );
   }
+}
 
-  Widget _buildDirectionStep({
-    required int number,
-    required String description,
-    required bool isLast,
-  }) {
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Column(
+class _JourneyDetailsSheet extends StatefulWidget {
+  const _JourneyDetailsSheet({
+    required this.option,
+    required this.initiallySaved,
+    required this.onToggleSaved,
+    required this.onStart,
+  });
+
+  final JourneyOption option;
+  final bool initiallySaved;
+  final Future<void> Function() onToggleSaved;
+  final Future<void> Function() onStart;
+
+  @override
+  State<_JourneyDetailsSheet> createState() => _JourneyDetailsSheetState();
+}
+
+class _JourneyDetailsSheetState extends State<_JourneyDetailsSheet> {
+  late bool _saved;
+
+  @override
+  void initState() {
+    super.initState();
+    _saved = widget.initiallySaved;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final option = widget.option;
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    '${option.origin.name} to ${option.destination.name}',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close details',
+                  onPressed: () => Navigator.pop(context, false),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${_formatTime(option.departureTime)} - '
+              '${_formatTime(option.arrivalTime)}  |  '
+              '${option.totalDurationMinutes} min  |  ${_fareText(option)}',
+              style: const TextStyle(color: AppTheme.secondaryText),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Modes: ${option.modes.join(', ')}',
+              style: const TextStyle(color: AppTheme.secondaryText),
+            ),
+            if (!option.usesOfficialSchedule) ...[
+              const SizedBox(height: 6),
+              const Text(
+                'This route is based on the official stop sequence, but its displayed times are estimates.',
+                style: TextStyle(color: Color(0xFFE65100), fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 16),
+            JourneyRouteMap(option: option),
+            const SizedBox(height: 20),
+            const Text(
+              'Step-by-step instructions',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            for (var index = 0; index < option.directions.length; index++)
+              _journeyDirectionStep(
+                number: index + 1,
+                description: option.directions[index],
+                isLast: index == option.directions.length - 1,
+              ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      await widget.onToggleSaved();
+                      if (mounted) setState(() => _saved = !_saved);
+                    },
+                    icon: Icon(
+                      _saved
+                          ? Icons.bookmark_remove_outlined
+                          : Icons.bookmark_add_outlined,
+                    ),
+                    label: Text(_saved ? 'Remove Plan' : 'Save Plan'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: widget.onStart,
+                    icon: const Icon(Icons.navigation),
+                    label: const Text('Start Journey'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Widget _journeyDirectionStep({
+  required int number,
+  required String description,
+  required bool isLast,
+}) {
+  return IntrinsicHeight(
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          width: 34,
+          child: Column(
             children: [
               CircleAvatar(
                 radius: 14,
@@ -1171,22 +1310,20 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
                 ),
               ),
               if (!isLast)
-                Expanded(
-                  child: Container(width: 2, color: AppTheme.border),
-                ),
+                Expanded(child: Container(width: 2, color: AppTheme.border)),
             ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 18),
-              child: Text(description),
-            ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 18),
+            child: Text(description),
           ),
-        ],
-      ),
-    );
-  }
+        ),
+      ],
+    ),
+  );
 }
 
 class SavedJourneyManagerSheet extends StatefulWidget {
@@ -1221,7 +1358,9 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
 
   Future<void> _editJourney(SavedJourney journey) async {
     final originController = TextEditingController(text: journey.origin);
-    final destinationController = TextEditingController(text: journey.destination);
+    final destinationController = TextEditingController(
+      text: journey.destination,
+    );
     JourneyLocation? originLocation = journey.originLocation;
     JourneyLocation? destinationLocation = journey.destinationLocation;
     final oldOriginStop = _repository.findStop(journey.origin);
@@ -1232,7 +1371,10 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
     if (destinationLocation == null && oldDestinationStop != null) {
       destinationLocation = JourneyLocation.fromStop(oldDestinationStop);
     }
-    DateTime departure = journey.departureTime;
+    final now = DateTime.now();
+    DateTime departure = journey.departureTime.isBefore(now)
+        ? now.add(const Duration(minutes: 5))
+        : journey.departureTime;
 
     final updated = await showDialog<SavedJourney>(
       context: context,
@@ -1310,13 +1452,11 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
                         onTap: () async {
                           final date = await showDatePicker(
                             context: dialogContext,
-                            initialDate: departure,
-                            firstDate: DateTime.now().subtract(
-                              const Duration(days: 1),
-                            ),
-                            lastDate: DateTime.now().add(
-                              const Duration(days: 365),
-                            ),
+                            initialDate: DateUtils.dateOnly(departure),
+                            firstDate: DateUtils.dateOnly(DateTime.now()),
+                            lastDate: DateUtils.dateOnly(
+                              DateTime.now(),
+                            ).add(const Duration(days: 365)),
                           );
                           if (date == null || !dialogContext.mounted) return;
                           final time = await showTimePicker(
@@ -1352,13 +1492,16 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
                       origin: selectedOrigin,
                       destination: selectedDestination,
                       requestedTime: departure,
-                      modes: const {'Bus'},
-                      maximumWalkingMetres: 2000,
+                      modes: journey.modes.isEmpty
+                          ? const {'Bus'}
+                          : journey.modes.toSet(),
+                      maximumWalkingMetres: journey.maximumWalkingMetres
+                          .toDouble(),
                     );
                     if (validationError != null) {
-                      ScaffoldMessenger.of(dialogContext).showSnackBar(
-                        SnackBar(content: Text(validationError)),
-                      );
+                      ScaffoldMessenger.of(
+                        dialogContext,
+                      ).showSnackBar(SnackBar(content: Text(validationError)));
                       return;
                     }
                     Navigator.pop(
@@ -1386,17 +1529,88 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
     originController.dispose();
     destinationController.dispose();
     if (updated == null) return;
-    await _storage.updateSavedJourney(updated);
+    final recalculated = await _recalculateJourney(updated);
+    if (recalculated == null) return;
+    await _storage.updateSavedJourney(recalculated);
     await _reload();
   }
 
   Future<void> _duplicateJourney(SavedJourney journey) async {
-    await _storage.duplicateSavedJourney(journey);
+    final request = journey.copyWith(
+      id: '${journey.id}-copy-${DateTime.now().microsecondsSinceEpoch}',
+      departureTime: journey.departureTime.add(const Duration(days: 1)),
+      savedAt: DateTime.now(),
+    );
+    final recalculated = await _recalculateJourney(request);
+    if (recalculated == null) return;
+    await _storage.updateSavedJourney(recalculated);
     await _reload();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Journey plan duplicated for the next day.')),
+      const SnackBar(
+        content: Text('Journey plan duplicated for the next day.'),
+      ),
     );
+  }
+
+  Future<SavedJourney?> _recalculateJourney(SavedJourney request) async {
+    final origin = request.originLocation;
+    final destination = request.destinationLocation;
+    if (origin == null || destination == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This plan has incomplete locations.')),
+        );
+      }
+      return null;
+    }
+    final modes = request.modes.where((mode) => mode != 'Ferry').toSet();
+    if (modes.isEmpty) modes.addAll(['Bus', 'MRT', 'LRT', 'KTM', 'Monorail']);
+    try {
+      await _repository.ensureDataForJourney(
+        origin,
+        destination,
+        selectedModes: modes,
+      );
+      final options = await _repository.findJourneys(
+        origin: origin,
+        destination: destination,
+        requestedTime: request.departureTime,
+        departAt: request.departAt,
+        selectedModes: modes,
+        accessibleOnly: request.accessibleOnly,
+        fewerTransfers: request.fewerTransfers,
+        maximumWalkingMetres: request.maximumWalkingMetres,
+        preference: request.preference,
+      );
+      if (options.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No current official schedule matches this plan.'),
+            ),
+          );
+        }
+        return null;
+      }
+      return SavedJourney.fromOption(
+        options.first,
+        id: request.id,
+        savedAt: request.savedAt,
+        preference: request.preference,
+        departAt: request.departAt,
+        maximumWalkingMetres: request.maximumWalkingMetres,
+        accessibleOnly: request.accessibleOnly,
+        fewerTransfers: request.fewerTransfers,
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Unable to refresh this plan: $error')),
+        );
+      }
+      return null;
+    }
   }
 
   Future<void> _deleteJourney(SavedJourney journey) async {
@@ -1404,7 +1618,9 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Delete Journey Plan?'),
-        content: Text('${journey.origin} to ${journey.destination} will be removed.'),
+        content: Text(
+          '${journey.origin} to ${journey.destination} will be removed.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -1436,7 +1652,10 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
                   Expanded(
                     child: Text(
                       'Saved Journey Plans',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                   Icon(Icons.swipe_left, color: AppTheme.secondaryText),
@@ -1448,85 +1667,86 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _journeys.isEmpty
-                      ? const _EmptySavedJourneyState()
-                      : ListView.separated(
-                          padding: const EdgeInsets.all(16),
-                          itemCount: _journeys.length,
-                          separatorBuilder: (_, _) => const SizedBox(height: 12),
-                          itemBuilder: (context, index) {
-                            final journey = _journeys[index];
-                            return Card(
-                              margin: EdgeInsets.zero,
-                              child: Padding(
-                                padding: const EdgeInsets.all(14),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                  ? const _EmptySavedJourneyState()
+                  : ListView.separated(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _journeys.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final journey = _journeys[index];
+                        return Card(
+                          margin: EdgeInsets.zero,
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
                                   children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            '${journey.origin} -> ${journey.destination}',
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
+                                    Expanded(
+                                      child: Text(
+                                        '${journey.origin} -> ${journey.destination}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
                                         ),
-                                        PopupMenuButton<String>(
-                                          onSelected: (value) {
-                                            if (value == 'edit') {
-                                              _editJourney(journey);
-                                            } else if (value == 'duplicate') {
-                                              _duplicateJourney(journey);
-                                            } else if (value == 'delete') {
-                                              _deleteJourney(journey);
-                                            }
-                                          },
-                                          itemBuilder: (_) => const [
-                                            PopupMenuItem(
-                                              value: 'edit',
-                                              child: Text('Edit'),
-                                            ),
-                                            PopupMenuItem(
-                                              value: 'duplicate',
-                                              child: Text('Duplicate'),
-                                            ),
-                                            PopupMenuItem(
-                                              value: 'delete',
-                                              child: Text('Delete'),
-                                            ),
-                                          ],
+                                      ),
+                                    ),
+                                    PopupMenuButton<String>(
+                                      onSelected: (value) {
+                                        if (value == 'edit') {
+                                          _editJourney(journey);
+                                        } else if (value == 'duplicate') {
+                                          _duplicateJourney(journey);
+                                        } else if (value == 'delete') {
+                                          _deleteJourney(journey);
+                                        }
+                                      },
+                                      itemBuilder: (_) => const [
+                                        PopupMenuItem(
+                                          value: 'edit',
+                                          child: Text('Edit'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'duplicate',
+                                          child: Text('Duplicate'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'delete',
+                                          child: Text('Delete'),
                                         ),
                                       ],
                                     ),
-                                    Text(
-                                      '${journey.routeSummary}  |  '
-                                      '${journey.durationMinutes} min  |  '
-                                      'RM ${journey.fare.toStringAsFixed(2)}',
-                                      style: const TextStyle(
-                                        color: AppTheme.secondaryText,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      '${_formatDate(journey.departureTime)} at '
-                                      '${_formatTime(journey.departureTime)}',
-                                    ),
-                                    const SizedBox(height: 10),
-                                    Align(
-                                      alignment: Alignment.centerRight,
-                                      child: TextButton.icon(
-                                        onPressed: () => Navigator.pop(context, journey),
-                                        icon: const Icon(Icons.route),
-                                        label: const Text('Use This Plan'),
-                                      ),
-                                    ),
                                   ],
                                 ),
-                              ),
-                            );
-                          },
-                        ),
+                                Text(
+                                  '${journey.routeSummary}  |  '
+                                  '${journey.durationMinutes} min  |  '
+                                  '${journey.knownFare == null ? 'Fare unavailable' : 'RM ${journey.knownFare!.toStringAsFixed(2)}'}',
+                                  style: const TextStyle(
+                                    color: AppTheme.secondaryText,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  '${_formatDate(journey.departureTime)} at '
+                                  '${_formatTime(journey.departureTime)}',
+                                ),
+                                const SizedBox(height: 10),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: TextButton.icon(
+                                    onPressed: () =>
+                                        Navigator.pop(context, journey),
+                                    icon: const Icon(Icons.route),
+                                    label: const Text('Use This Plan'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
             ),
           ],
         ),
@@ -1546,9 +1766,16 @@ class _EmptySavedJourneyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.bookmarks_outlined, size: 52, color: AppTheme.secondaryText),
+            Icon(
+              Icons.bookmarks_outlined,
+              size: 52,
+              color: AppTheme.secondaryText,
+            ),
             SizedBox(height: 12),
-            Text('No saved plans yet', style: TextStyle(fontWeight: FontWeight.bold)),
+            Text(
+              'No saved plans yet',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             SizedBox(height: 6),
             Text(
               'Find a route and tap the bookmark button to save it.',
@@ -1570,19 +1797,12 @@ class JourneyRouteMap extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final allStops = option.legs.expand((leg) => leg.stops).toList();
-    final markerStops = <TransitStop>[];
-    const maximumMapMarkers = 35;
-    if (allStops.length <= maximumMapMarkers) {
-      markerStops.addAll(allStops);
-    } else {
-      final step = (allStops.length / maximumMapMarkers).ceil();
-      for (var index = 0; index < allStops.length; index += step) {
-        markerStops.add(allStops[index]);
-      }
-      if (markerStops.last.id != allStops.last.id) {
-        markerStops.add(allStops.last);
-      }
+    final markerStopsById = <String, TransitStop>{};
+    for (final leg in option.legs) {
+      markerStopsById[leg.from.id] = leg.from;
+      markerStopsById[leg.to.id] = leg.to;
     }
+    final markerStops = markerStopsById.values.toList();
     double totalLatitude = option.origin.latitude + option.destination.latitude;
     double totalLongitude =
         option.origin.longitude + option.destination.longitude;
@@ -1604,15 +1824,12 @@ class JourneyRouteMap extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: FlutterMap(
-        options: MapOptions(
-          initialCenter: mapCentre,
-          initialZoom: 10,
-        ),
+        options: MapOptions(initialCenter: mapCentre, initialZoom: 10),
         children: [
           TileLayer(
             maxZoom: 19,
             urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            userAgentPackageName: 'my.edu.tarumt.smart_tublic_transport_system',
+            userAgentPackageName: 'my.edu.tarumt.smart_public_transport_system',
             panBuffer: 0,
           ),
           PolylineLayer(
@@ -1630,9 +1847,16 @@ class JourneyRouteMap extends StatelessWidget {
               ),
               for (final leg in option.legs)
                 Polyline(
-                  points: leg.stops.map((stop) {
-                    return LatLng(stop.latitude, stop.longitude);
-                  }).toList(),
+                  points: leg.shapePoints.isNotEmpty
+                      ? leg.shapePoints
+                            .map(
+                              (point) =>
+                                  LatLng(point.latitude, point.longitude),
+                            )
+                            .toList()
+                      : leg.stops.map((stop) {
+                          return LatLng(stop.latitude, stop.longitude);
+                        }).toList(),
                   color: _routeColour(leg.route),
                   strokeWidth: 5,
                 ),
@@ -1668,10 +1892,7 @@ class JourneyRouteMap extends StatelessWidget {
               Marker(
                 width: 40,
                 height: 40,
-                point: LatLng(
-                  option.origin.latitude,
-                  option.origin.longitude,
-                ),
+                point: LatLng(option.origin.latitude, option.origin.longitude),
                 child: const Icon(
                   Icons.trip_origin,
                   color: Color(0xFF2E7D32),
@@ -1725,11 +1946,21 @@ String _formatTime(DateTime value) {
   final hour = value.hour == 0
       ? 12
       : value.hour > 12
-          ? value.hour - 12
-          : value.hour;
+      ? value.hour - 12
+      : value.hour;
   final minute = value.minute.toString().padLeft(2, '0');
   final period = value.hour >= 12 ? 'PM' : 'AM';
   return '$hour:$minute $period';
+}
+
+String _fareText(JourneyOption option) {
+  final fare = option.knownTotalFare;
+  if (fare == null) {
+    return option.farePartiallyKnown
+        ? 'Fare partially unavailable'
+        : 'Fare unavailable';
+  }
+  return 'RM ${fare.toStringAsFixed(2)}';
 }
 
 IconData _modeIcon(String mode) {

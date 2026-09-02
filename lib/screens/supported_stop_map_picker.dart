@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import '../data/geocoding_service.dart';
 import '../data/input_validator.dart';
 import '../data/location_service.dart';
+import '../data/transit_repository.dart';
 import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
 
@@ -23,12 +24,12 @@ class SupportedStopMapPicker extends StatefulWidget {
   final JourneyLocation? initialLocation;
 
   @override
-  State<SupportedStopMapPicker> createState() =>
-      _SupportedStopMapPickerState();
+  State<SupportedStopMapPicker> createState() => _SupportedStopMapPickerState();
 }
 
 class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
   final GeocodingService _geocodingService = GeocodingService();
+  final TransitRepository _repository = TransitRepository.instance;
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
   Timer? _mapMoveDebounce;
@@ -36,12 +37,15 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
   String? _selectedName;
   TransitStop? _nearestStop;
   List<TransitStop> _visibleMapStops = [];
+  late List<TransitStop> _availableStops;
   bool _searching = false;
   bool _findingName = false;
+  bool _loadingStops = false;
 
   @override
   void initState() {
     super.initState();
+    _availableStops = List.of(widget.stops);
     final initialLocation = widget.initialLocation;
     if (initialLocation != null &&
         LocationService.isInsideMalaysia(
@@ -54,6 +58,10 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
       );
       _selectedName = initialLocation.name;
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final point = _selectedPoint;
+      if (point != null) _loadStopsNear(point);
+    });
   }
 
   @override
@@ -65,10 +73,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
   }
 
   Future<void> _selectPoint(LatLng point, {String? name}) async {
-    if (!LocationService.isInsideMalaysia(
-      point.latitude,
-      point.longitude,
-    )) {
+    if (!LocationService.isInsideMalaysia(point.latitude, point.longitude)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please select a location inside Malaysia.'),
@@ -76,6 +81,8 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
       );
       return;
     }
+    await _loadStopsNear(point);
+    if (!mounted) return;
     final nearestStop = _findNearestStop(point);
     setState(() {
       _selectedPoint = point;
@@ -83,6 +90,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
       _nearestStop = nearestStop;
       _findingName = name == null;
     });
+    _refreshVisibleStops(_mapController.camera);
 
     if (name != null) return;
 
@@ -93,7 +101,8 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
     if (!mounted || _selectedPoint != point) return;
 
     setState(() {
-      _selectedName = placeName ??
+      _selectedName =
+          placeName ??
           (nearestStop == null
               ? 'Selected location'
               : 'Near ${nearestStop.name}');
@@ -106,9 +115,9 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
     final query = _searchController.text.trim();
     final validationError = InputValidator.locationSearch(query);
     if (validationError != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(validationError)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(validationError)));
       return;
     }
     setState(() => _searching = true);
@@ -135,10 +144,11 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
     TransitStop? nearestStop;
     double? smallestDifference;
 
-    for (final stop in widget.stops) {
+    for (final stop in _availableStops) {
       final latitudeDifference = stop.latitude - point.latitude;
       final longitudeDifference = stop.longitude - point.longitude;
-      final difference = latitudeDifference * latitudeDifference +
+      final difference =
+          latitudeDifference * latitudeDifference +
           longitudeDifference * longitudeDifference;
       if (smallestDifference == null || difference < smallestDifference) {
         smallestDifference = difference;
@@ -155,36 +165,76 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
     });
   }
 
-  void _onMapPositionChanged(MapCamera camera, bool hasGesture) {
+  void _onMapPositionChanged(MapCamera camera, bool _) {
     _mapMoveDebounce?.cancel();
     _mapMoveDebounce = Timer(const Duration(milliseconds: 300), () {
-      if (mounted) _refreshVisibleStops(camera);
+      if (!mounted) return;
+      _refreshVisibleStops(camera);
     });
   }
 
+  Future<void> _loadStopsNear(LatLng point) async {
+    if (_loadingStops) return;
+    _loadingStops = true;
+    try {
+      await _repository.ensureDataNear(point.latitude, point.longitude);
+      if (!mounted) return;
+      setState(() => _availableStops = _repository.stops);
+      _refreshVisibleStops(_mapController.camera);
+    } catch (_) {
+      // A place can still be selected when an official feed is unavailable.
+    } finally {
+      _loadingStops = false;
+    }
+  }
+
   void _refreshVisibleStops(MapCamera camera) {
+    final selectedPoint = _selectedPoint;
     final zoom = camera.zoom;
-    if (zoom < 9) {
+    if (selectedPoint == null || zoom < 9) {
       setState(() => _visibleMapStops = []);
       return;
     }
 
-    final maximumMarkers = zoom < 11
-        ? 60
-        : zoom < 13
-        ? 120
-        : 220;
     final bounds = camera.visibleBounds;
-    final visibleStops = <TransitStop>[];
+    final visibleStops = _availableStops.where((stop) {
+      if (!bounds.contains(LatLng(stop.latitude, stop.longitude))) return false;
+      return _distanceSquared(
+            stop.latitude,
+            stop.longitude,
+            selectedPoint.latitude,
+            selectedPoint.longitude,
+          ) <=
+          0.0025;
+    }).toList();
+    visibleStops.sort((a, b) {
+      final first = _distanceSquared(
+        a.latitude,
+        a.longitude,
+        selectedPoint.latitude,
+        selectedPoint.longitude,
+      );
+      final second = _distanceSquared(
+        b.latitude,
+        b.longitude,
+        selectedPoint.latitude,
+        selectedPoint.longitude,
+      );
+      return first.compareTo(second);
+    });
 
-    for (final stop in widget.stops) {
-      if (bounds.contains(LatLng(stop.latitude, stop.longitude))) {
-        visibleStops.add(stop);
-        if (visibleStops.length >= maximumMarkers) break;
-      }
-    }
+    setState(() => _visibleMapStops = visibleStops.take(40).toList());
+  }
 
-    setState(() => _visibleMapStops = visibleStops);
+  double _distanceSquared(
+    double firstLatitude,
+    double firstLongitude,
+    double secondLatitude,
+    double secondLongitude,
+  ) {
+    final latitude = firstLatitude - secondLatitude;
+    final longitude = firstLongitude - secondLongitude;
+    return latitude * latitude + longitude * longitude;
   }
 
   void _returnSelectedLocation() {
@@ -205,7 +255,8 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
   @override
   Widget build(BuildContext context) {
     final suppliedInitialLocation = widget.initialLocation;
-    final initialLocation = suppliedInitialLocation != null &&
+    final initialLocation =
+        suppliedInitialLocation != null &&
             LocationService.isInsideMalaysia(
               suppliedInitialLocation.latitude,
               suppliedInitialLocation.longitude,
@@ -213,198 +264,200 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
         ? suppliedInitialLocation
         : null;
     final initialCentre = initialLocation == null
-        ? const LatLng(5.4141, 100.3288)
+        ? const LatLng(4.2, 101.5)
         : LatLng(initialLocation.latitude, initialLocation.longitude);
     final selectedPoint = _selectedPoint;
     final nearestStop = _nearestStop;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      appBar: AppBar(
-        title: Text(widget.title),
-      ),
+      appBar: AppBar(title: Text(widget.title)),
       body: Column(
         children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      textInputAction: TextInputAction.search,
-                      onSubmitted: (_) => _searchForLocation(),
-                      decoration: const InputDecoration(
-                        hintText: 'Search place, address or landmark',
-                        prefixIcon: Icon(Icons.search),
-                      ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: (_) => _searchForLocation(),
+                    decoration: const InputDecoration(
+                      hintText: 'Search place, address or landmark',
+                      prefixIcon: Icon(Icons.search),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(88, 48),
-                    ),
-                    onPressed: _searching ? null : _searchForLocation,
-                    child: _searching
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Text('Search'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(88, 48),
                   ),
-                ],
-              ),
+                  onPressed: _searching ? null : _searchForLocation,
+                  child: _searching
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Search'),
+                ),
+              ],
             ),
-            Expanded(
-              child: Stack(
-                children: [
-                  FlutterMap(
-                    mapController: _mapController,
-                    options: MapOptions(
-                      initialCenter: initialCentre,
-                      initialZoom: initialLocation == null ? 11 : 14,
-                      onMapReady: _onMapReady,
-                      onPositionChanged: _onMapPositionChanged,
-                      onTap: (_, point) => _selectPoint(point),
+          ),
+          Expanded(
+            child: Stack(
+              children: [
+                FlutterMap(
+                  mapController: _mapController,
+                  options: MapOptions(
+                    initialCenter: initialCentre,
+                    initialZoom: initialLocation == null ? 6 : 14,
+                    onMapReady: _onMapReady,
+                    onPositionChanged: _onMapPositionChanged,
+                    onTap: (_, point) async {
+                      await _selectPoint(point);
+                      if (mounted && _mapController.camera.zoom < 11) {
+                        _mapController.move(point, 12);
+                      }
+                    },
+                  ),
+                  children: [
+                    TileLayer(
+                      maxZoom: 19,
+                      urlTemplate:
+                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName:
+                          'my.edu.tarumt.smart_public_transport_system',
+                      panBuffer: 0,
                     ),
-                    children: [
-                      TileLayer(
-                        maxZoom: 19,
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName:
-                            'my.edu.tarumt.smart_tublic_transport_system',
-                        panBuffer: 0,
-                      ),
-                      MarkerLayer(
-                        markers: [
-                          for (final stop in _visibleMapStops)
-                            Marker(
-                              width: 38,
-                              height: 38,
-                              point: LatLng(stop.latitude, stop.longitude),
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTap: () => _selectPoint(
-                                  LatLng(stop.latitude, stop.longitude),
-                                  name: stop.name,
-                                ),
-                                child: Tooltip(
-                                  message: stop.name,
-                                  child: const Icon(
-                                    Icons.directions_transit,
-                                    size: 25,
-                                    color: AppTheme.primaryBlue,
-                                  ),
+                    MarkerLayer(
+                      markers: [
+                        for (final stop in _visibleMapStops)
+                          Marker(
+                            width: 38,
+                            height: 38,
+                            point: LatLng(stop.latitude, stop.longitude),
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () => _selectPoint(
+                                LatLng(stop.latitude, stop.longitude),
+                                name: stop.name,
+                              ),
+                              child: Tooltip(
+                                message: stop.name,
+                                child: const Icon(
+                                  Icons.directions_transit,
+                                  size: 25,
+                                  color: AppTheme.primaryBlue,
                                 ),
                               ),
                             ),
-                          if (selectedPoint != null)
-                            Marker(
-                              width: 48,
-                              height: 48,
-                              point: selectedPoint,
-                              child: const Icon(
-                                Icons.location_on,
-                                size: 44,
-                                color: Colors.red,
-                              ),
+                          ),
+                        if (selectedPoint != null)
+                          Marker(
+                            width: 48,
+                            height: 48,
+                            point: selectedPoint,
+                            child: const Icon(
+                              Icons.location_on,
+                              size: 44,
+                              color: Colors.red,
                             ),
-                        ],
-                      ),
-                      const Align(
-                        alignment: Alignment.topRight,
-                        child: Padding(
-                          padding: EdgeInsets.all(4),
-                          child: ColoredBox(
-                            color: Colors.white70,
-                            child: Padding(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 4,
-                                vertical: 2,
-                              ),
-                              child: Text(
-                                '© OpenStreetMap contributors',
-                                style: TextStyle(fontSize: 9),
-                              ),
+                          ),
+                      ],
+                    ),
+                    const Align(
+                      alignment: Alignment.topRight,
+                      child: Padding(
+                        padding: EdgeInsets.all(4),
+                        child: ColoredBox(
+                          color: Colors.white70,
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 2,
+                            ),
+                            child: Text(
+                              '© OpenStreetMap contributors',
+                              style: TextStyle(fontSize: 9),
                             ),
                           ),
                         ),
                       ),
-                    ],
-                  ),
-                  Positioned(
-                    left: 12,
-                    right: 12,
-                    bottom: 12,
-                    child: Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.touch_app,
-                              color: AppTheme.primaryBlue,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: selectedPoint == null
-                                  ? const Text(
-                                      'Tap the map to select a location.',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    )
-                                  : Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          _findingName
-                                              ? 'Finding place name...'
-                                              : _selectedName ??
+                    ),
+                  ],
+                ),
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: 12,
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.touch_app,
+                            color: AppTheme.primaryBlue,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: selectedPoint == null
+                                ? const Text(
+                                    'Tap a region to load nearby official stops.',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  )
+                                : Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        _findingName
+                                            ? 'Finding place name...'
+                                            : _selectedName ??
                                                   'Selected location',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      if (nearestStop != null)
+                                        Text(
+                                          'Nearest transport stop: '
+                                          '${nearestStop.name}',
                                           style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
+                                            color: AppTheme.secondaryText,
+                                            fontSize: 11,
                                           ),
                                         ),
-                                        if (nearestStop != null)
-                                          Text(
-                                            'Nearest transport stop: '
-                                            '${nearestStop.name}',
-                                            style: const TextStyle(
-                                              color: AppTheme.secondaryText,
-                                              fontSize: 11,
-                                            ),
-                                          ),
-                                      ],
-                                    ),
+                                    ],
+                                  ),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size(84, 44),
                             ),
-                            const SizedBox(width: 8),
-                            FilledButton(
-                              style: FilledButton.styleFrom(
-                                minimumSize: const Size(84, 44),
-                              ),
-                              onPressed: selectedPoint == null
-                                      || _findingName
-                                  ? null
-                                  : _returnSelectedLocation,
-                              child: const Text('Select'),
-                            ),
-                          ],
-                        ),
+                            onPressed: selectedPoint == null || _findingName
+                                ? null
+                                : _returnSelectedLocation,
+                            child: const Text('Select'),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
+          ),
         ],
       ),
     );

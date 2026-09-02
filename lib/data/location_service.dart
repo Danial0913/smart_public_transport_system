@@ -1,7 +1,4 @@
-import 'dart:async';
-
 import 'package:location/location.dart';
-import 'package:permission_handler/permission_handler.dart' as handler;
 
 class LocationService {
   final Location _location = Location();
@@ -16,21 +13,7 @@ class LocationService {
 
   Future<LocationData?> getCurrentLocation() async {
     lastErrorMessage = null;
-    var permissionGranted =
-        await handler.Permission.locationWhenInUse.isGranted;
-    if (!permissionGranted) {
-      final permissionStatus =
-          await handler.Permission.locationWhenInUse.request();
-      permissionGranted =
-          permissionStatus == handler.PermissionStatus.granted;
-      if (!permissionGranted) {
-        lastErrorMessage = 'Location permission was not granted.';
-        return null;
-      }
-    }
-
-    var gpsEnabled =
-        await handler.Permission.location.serviceStatus.isEnabled;
+    var gpsEnabled = await _location.serviceEnabled();
     if (!gpsEnabled) {
       gpsEnabled = await _location.requestService();
     }
@@ -40,53 +23,36 @@ class LocationService {
       return null;
     }
 
-    final result = Completer<LocationData?>();
-    LocationData? lastLocation;
-
-    // Use the same continuous location stream taught in Practical 13. Ignore
-    // an old foreign reading and wait for the next valid Malaysian update.
-    late StreamSubscription<LocationData> subscription;
-    subscription = _location.onLocationChanged.listen(
-      (currentLocation) {
-        lastLocation = currentLocation;
-        final latitude = currentLocation.latitude;
-        final longitude = currentLocation.longitude;
-        if (latitude != null &&
-            longitude != null &&
-            isInsideMalaysia(latitude, longitude) &&
-            !result.isCompleted) {
-          result.complete(currentLocation);
-        }
-      },
-      onError: (_) {
-        if (!result.isCompleted) {
-          result.complete(null);
-        }
-      },
-    );
-
-    final timer = Timer(const Duration(seconds: 30), () {
-      if (!result.isCompleted) {
-        result.complete(null);
-      }
-    });
-
-    final location = await result.future;
-    timer.cancel();
-    await subscription.cancel();
-
-    if (location == null) {
-      final rejectedLatitude = lastLocation?.latitude;
-      final rejectedLongitude = lastLocation?.longitude;
-      if (rejectedLatitude != null && rejectedLongitude != null) {
-        lastErrorMessage =
-            'The device reported ${rejectedLatitude.toStringAsFixed(5)}, '
-            '${rejectedLongitude.toStringAsFixed(5)}, which is outside '
-            'Malaysia. No Malaysian GPS update was received.';
-      } else {
-        lastErrorMessage = 'Unable to receive a GPS location. Please try again.';
-      }
+    var permission = await _location.hasPermission();
+    if (permission == PermissionStatus.denied) {
+      permission = await _location.requestPermission();
     }
-    return location;
+    if (permission == PermissionStatus.deniedForever) {
+      lastErrorMessage =
+          'Location permission is permanently denied. Enable it in system settings.';
+      return null;
+    }
+    if (permission != PermissionStatus.granted &&
+        permission != PermissionStatus.grantedLimited) {
+      lastErrorMessage = 'Location permission was not granted.';
+      return null;
+    }
+
+    try {
+      final result = await _location.getLocation().timeout(
+        const Duration(seconds: 15),
+      );
+      final latitude = result.latitude;
+      final longitude = result.longitude;
+      if (!isInsideMalaysia(latitude, longitude)) {
+        lastErrorMessage =
+            'The reported GPS position is outside Malaysia. Choose a location on the map instead.';
+        return null;
+      }
+      return result;
+    } catch (_) {
+      lastErrorMessage = 'Unable to receive a GPS location within 15 seconds.';
+      return null;
+    }
   }
 }

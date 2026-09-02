@@ -4,9 +4,7 @@ import '../data/geocoding_service.dart';
 import '../data/input_validator.dart';
 import '../data/local_storage_service.dart';
 import '../data/location_service.dart';
-import '../data/ridership_api_service.dart';
 import '../data/transit_repository.dart';
-import '../models/ridership_models.dart';
 import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
 import 'journey_planner_screen.dart';
@@ -27,7 +25,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final TransitRepository _repository = TransitRepository.instance;
   final LocationService _locationService = LocationService();
   final GeocodingService _geocodingService = GeocodingService();
-  final RidershipApiService _ridershipApiService = RidershipApiService();
 
   final TextEditingController _originController = TextEditingController();
   final TextEditingController _destinationController = TextEditingController();
@@ -37,6 +34,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
   bool _isLoading = true;
   bool _gettingLocation = false;
+  bool _choosingLocation = false;
+  bool _dashboardRequestInFlight = false;
   Key _plannerKey = UniqueKey();
   String? _selectedCategoryId;
   JourneyOption? _activeJourney;
@@ -47,9 +46,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<RecentSearch> _recentSearches = [];
   List<SavedJourney> _savedJourneys = [];
   List<ServiceUsage> _frequentServices = [];
-
-  late Future<List<PublicTransportRidership>> _publicTransportRidership;
-  late Future<List<KtmbRidership>> _ktmbRidership;
 
   static const List<String> _pageTitles = [
     'Home',
@@ -73,12 +69,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _fetchDashboardData() async {
+    if (_dashboardRequestInFlight) return;
+    _dashboardRequestInFlight = true;
     if (mounted) {
       setState(() {
         _isLoading = true;
-        _publicTransportRidership =
-            _ridershipApiService.fetchPublicTransportRidership();
-        _ktmbRidership = _ridershipApiService.fetchKtmbRidership();
       });
     }
 
@@ -106,6 +101,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _isLoading = false;
       });
       _showMessage('Failed to load dashboard data: $error');
+    } finally {
+      _dashboardRequestInFlight = false;
     }
   }
 
@@ -130,8 +127,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _originController.text = originLocation.name;
       } else if (origin != null && origin.isNotEmpty) {
         final stop = _repository.findStop(origin);
-        _originLocation =
-            stop == null ? null : JourneyLocation.fromStop(stop);
+        _originLocation = stop == null ? null : JourneyLocation.fromStop(stop);
         _originController.text = origin;
       }
       if (destinationLocation != null) {
@@ -139,8 +135,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _destinationController.text = destinationLocation.name;
       } else if (destination != null) {
         final stop = _repository.findStop(destination);
-        _destinationLocation =
-            stop == null ? null : JourneyLocation.fromStop(stop);
+        _destinationLocation = stop == null
+            ? null
+            : JourneyLocation.fromStop(stop);
         _destinationController.text = destination;
       }
       _plannerKey = UniqueKey();
@@ -164,38 +161,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
     required String title,
     required bool isOrigin,
   }) async {
+    if (_choosingLocation) return;
+    _choosingLocation = true;
     try {
-      final initialLocation = isOrigin ? _originLocation : _destinationLocation;
-      await _repository.ensureDataNear(
-        initialLocation?.latitude ?? 5.4141,
-        initialLocation?.longitude ?? 100.3288,
-      );
-    } catch (error) {
-      if (mounted) _showMessage('Unable to load transport stops: $error');
-      return;
-    }
-    if (!mounted) return;
-    final selectedLocation = await Navigator.push<JourneyLocation>(
-      context,
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => SupportedStopMapPicker(
-          title: title,
-          stops: _repository.stops,
-          initialLocation: isOrigin ? _originLocation : _destinationLocation,
+      final selectedLocation = await Navigator.push<JourneyLocation>(
+        context,
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => SupportedStopMapPicker(
+            title: title,
+            stops: _repository.stops,
+            initialLocation: isOrigin ? _originLocation : _destinationLocation,
+          ),
         ),
-      ),
-    );
+      );
 
-    if (selectedLocation == null || !mounted) return;
-    setState(() {
-      controller.text = selectedLocation.name;
-      if (isOrigin) {
-        _originLocation = selectedLocation;
-      } else {
-        _destinationLocation = selectedLocation;
-      }
-    });
+      if (selectedLocation == null || !mounted) return;
+      setState(() {
+        controller.text = selectedLocation.name;
+        if (isOrigin) {
+          _originLocation = selectedLocation;
+        } else {
+          _destinationLocation = selectedLocation;
+        }
+      });
+    } finally {
+      _choosingLocation = false;
+    }
   }
 
   Future<void> _useGpsForOrigin() async {
@@ -220,9 +212,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (!LocationService.isInsideMalaysia(latitude, longitude)) {
         if (mounted) {
           _showMessage(
-            'The emulator GPS is outside Malaysia. Open Emulator Extended '
-            'Controls > Location and set a Penang location, for example '
-            '5.4141, 100.3288, or test with a real phone.',
+            'The reported GPS position is outside Malaysia. Choose a location on the map instead.',
           );
         }
         return;
@@ -236,7 +226,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final nearestStop = _repository.findNearestStop(latitude, longitude);
       if (!mounted) return;
       final gpsLocation = JourneyLocation(
-        name: placeName ??
+        name:
+            placeName ??
             (nearestStop == null
                 ? 'Current location'
                 : 'Near ${nearestStop.name}'),
@@ -303,8 +294,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (type == null || !mounted) return;
 
     if (type == 'Route' || type == 'Stop') {
+      var area = _originLocation ?? _destinationLocation;
+      if (area == null && _repository.routes.isEmpty) {
+        area = await Navigator.push<JourneyLocation>(
+          context,
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => SupportedStopMapPicker(
+              title: 'Choose an area for official services',
+              stops: _repository.stops,
+            ),
+          ),
+        );
+        if (area == null || !mounted) return;
+      }
       try {
-        await _repository.ensureDataNear(5.4141, 100.3288);
+        if (area != null) {
+          await _repository.ensureDataNear(area.latitude, area.longitude);
+        }
       } catch (error) {
         if (mounted) _showMessage('Unable to load transport data: $error');
         return;
@@ -349,36 +356,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     if (choices.isEmpty) {
-      _showMessage('Save a journey plan first before adding it as a favourite.');
+      _showMessage(
+        'Save a journey plan first before adding it as a favourite.',
+      );
       return;
     }
 
-    final choice = await showDialog<_FavouriteChoice>(
-      context: context,
-      builder: (dialogContext) {
-        return SimpleDialog(
-          title: Text('Select $type'),
-          children: [
-            SizedBox(
-              width: double.maxFinite,
-              height: 420,
-              child: ListView.builder(
-                itemCount: choices.length,
-                itemBuilder: (context, index) {
-                  final item = choices[index];
-                  return ListTile(
-                    leading: Icon(_favouriteIcon(item.type)),
-                    title: Text(item.title),
-                    subtitle: Text(item.subtitle),
-                    onTap: () => Navigator.pop(dialogContext, item),
-                  );
-                },
-              ),
-            ),
-          ],
-        );
-      },
-    );
+    final choice = await _chooseFavouriteChoice(type, choices);
     if (choice == null || !mounted) return;
 
     for (final favourite in _favourites) {
@@ -426,6 +410,66 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _showMessage('Favourite added to ${category.name}.');
   }
 
+  Future<_FavouriteChoice?> _chooseFavouriteChoice(
+    String type,
+    List<_FavouriteChoice> choices,
+  ) {
+    var query = '';
+    return showDialog<_FavouriteChoice>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final filtered = choices.where((choice) {
+            final text = '${choice.title} ${choice.subtitle}'.toLowerCase();
+            return text.contains(query.toLowerCase());
+          }).toList();
+          return AlertDialog(
+            title: Text('Select $type'),
+            content: SizedBox(
+              width: double.maxFinite,
+              height: 470,
+              child: Column(
+                children: [
+                  TextField(
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      hintText: 'Search official services',
+                    ),
+                    onChanged: (value) => setDialogState(() => query = value),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: filtered.isEmpty
+                        ? const Center(child: Text('No matching service.'))
+                        : ListView.builder(
+                            itemCount: filtered.length,
+                            itemBuilder: (context, index) {
+                              final item = filtered[index];
+                              return ListTile(
+                                leading: Icon(_favouriteIcon(item.type)),
+                                title: Text(item.title),
+                                subtitle: Text(item.subtitle),
+                                onTap: () => Navigator.pop(dialogContext, item),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _manageFavourites() async {
     await showModalBottomSheet<void>(
       context: context,
@@ -446,9 +490,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     await _fetchDashboardData();
   }
 
-  void _openFavourite(FavouriteItem favourite) {
+  Future<void> _openFavourite(FavouriteItem favourite) async {
     if (favourite.type == 'Stop') {
-      _openPlanner(destination: favourite.title);
+      try {
+        await _repository.ensureDataForReference(favourite.referenceId);
+      } catch (error) {
+        if (mounted) _showMessage('Unable to load this stop: $error');
+        return;
+      }
+      final stop = _repository.findStopById(favourite.referenceId);
+      if (stop == null) {
+        _showMessage('This stop is no longer present in the official feed.');
+        return;
+      }
+      _openPlanner(destinationLocation: JourneyLocation.fromStop(stop));
       return;
     }
 
@@ -468,14 +523,106 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return;
     }
 
-    _changePage(2);
-    _showMessage('${favourite.title} opened in the map module.');
+    try {
+      await _repository.ensureDataForReference(favourite.referenceId);
+    } catch (error) {
+      if (mounted) _showMessage('Unable to load this route: $error');
+      return;
+    }
+    final route = _repository.findRouteById(favourite.referenceId);
+    if (route == null) {
+      _showMessage('This route is no longer present in the official feed.');
+      return;
+    }
+    await _showRouteDetails(route);
+  }
+
+  Future<void> _openFrequentService(ServiceUsage service) async {
+    try {
+      await _repository.ensureDataForReference(service.routeId);
+    } catch (error) {
+      if (mounted) _showMessage('Unable to load this service: $error');
+      return;
+    }
+    final route = _repository.findRouteById(service.routeId);
+    if (route == null) {
+      _showMessage('This service is no longer present in the official feed.');
+      return;
+    }
+    await _showRouteDetails(route);
+  }
+
+  Future<void> _showRouteDetails(TransitRoute route) {
+    final stops = _repository.stopsForRoute(route);
+    final fare = route.knownFare == null
+        ? 'Fare unavailable in official GTFS data'
+        : 'Official feed fare: RM ${route.knownFare!.toStringAsFixed(2)}';
+    final frequency = route.knownFrequencyMinutes == null
+        ? 'See scheduled departures in journey planning'
+        : 'Published frequency: every ${route.knownFrequencyMinutes} min';
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(context).size.height * 0.72,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${route.number} - ${route.name}',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text('${route.mode} · $frequency'),
+                    Text(fare),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: stops.length,
+                  itemBuilder: (context, index) => ListTile(
+                    leading: CircleAvatar(
+                      radius: 13,
+                      child: Text('${index + 1}'),
+                    ),
+                    title: Text(stops[index].name),
+                    subtitle: stops[index].accessible
+                        ? const Text('Wheelchair boarding marked available')
+                        : null,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _openPlanner(
+                        destinationLocation: JourneyLocation.fromStop(
+                          stops[index],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -539,10 +686,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           onStartJourney: _openJourneyOnMap,
         );
       case 2:
-        return TransitMapScreen(
-          key: _mapKey,
-          journey: _activeJourney,
-        );
+        return TransitMapScreen(key: _mapKey, journey: _activeJourney);
       case 3:
         return const TravelHistoryScreen();
       case 4:
@@ -695,28 +839,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           const SizedBox(height: 10),
           _buildFrequentServices(),
-          const SizedBox(height: 24),
-          const Text(
-            'Malaysia Public Transport Usage',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 10),
-          _buildPublicTransportRidership(),
-          const SizedBox(height: 24),
-          const Text(
-            'Daily KTMB Usage',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 10),
-          _buildKtmbRidership(),
-          const SizedBox(height: 24),
-          _buildSectionHeader(
-            title: 'Supported Live Status',
-            actionText: 'View Map',
-            onAction: () => _changePage(2),
-          ),
-          const SizedBox(height: 10),
-          _buildLiveStatus(),
         ],
       ),
     );
@@ -936,9 +1058,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Text(
                         '${_formatDate(upcomingJourney.departureTime)} at '
                         '${_formatTime(upcomingJourney.departureTime)}',
-                        style: const TextStyle(
-                          color: AppTheme.secondaryText,
-                        ),
+                        style: const TextStyle(color: AppTheme.secondaryText),
                       ),
                     ],
                   ),
@@ -951,7 +1071,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               children: [
                 Text('${upcomingJourney.durationMinutes} min'),
                 const SizedBox(width: 16),
-                Text('RM ${upcomingJourney.fare.toStringAsFixed(2)}'),
+                Text(
+                  upcomingJourney.knownFare == null
+                      ? 'Fare unavailable'
+                      : 'RM ${upcomingJourney.knownFare!.toStringAsFixed(2)}',
+                ),
                 const Spacer(),
                 TextButton(
                   onPressed: () => _openPlanner(
@@ -1120,261 +1244,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             title: Text('${service.routeNumber} - ${service.routeName}'),
             subtitle: Text('${service.usageCount} journey uses'),
             trailing: Text(service.mode),
-            onTap: () => _changePage(2),
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _buildPublicTransportRidership() {
-    return FutureBuilder<List<PublicTransportRidership>>(
-      future: _publicTransportRidership,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return _buildApiLoadingCard('Loading public transport usage...');
-        }
-
-        if (snapshot.hasError) {
-          return _buildApiErrorCard(
-            'Unable to load public transport usage.',
-            () {
-              setState(() {
-                _publicTransportRidership =
-                    _ridershipApiService.fetchPublicTransportRidership();
-              });
-            },
-          );
-        }
-
-        final records = snapshot.data ?? [];
-        if (records.isEmpty) {
-          return _buildApiMessageCard('No public transport usage is available.');
-        }
-
-        final latest = records.first;
-        final services = latest.services.entries.where((entry) {
-          return entry.value != null;
-        }).toList();
-        services.sort((first, second) {
-          return second.value!.compareTo(first.value!);
-        });
-
-        return Card(
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Latest audited data: ${_formatApiDate(latest.date)}',
-                  style: const TextStyle(
-                    color: AppTheme.secondaryText,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                for (final service in services.take(5)) ...[
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.directions_transit,
-                        color: AppTheme.primaryBlue,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(child: Text(service.key)),
-                      Text(
-                        '${service.value} trips',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ],
-                  ),
-                  const Divider(height: 20),
-                ],
-                const Text(
-                  'Source: data.gov.my, Prasarana and Ministry of Transport',
-                  style: TextStyle(
-                    color: AppTheme.secondaryText,
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildKtmbRidership() {
-    return FutureBuilder<List<KtmbRidership>>(
-      future: _ktmbRidership,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return _buildApiLoadingCard('Loading daily KTMB usage...');
-        }
-
-        if (snapshot.hasError) {
-          return _buildApiErrorCard(
-            'Unable to load daily KTMB usage.',
-            () {
-              setState(() {
-                _ktmbRidership = _ridershipApiService.fetchKtmbRidership();
-              });
-            },
-          );
-        }
-
-        final records = snapshot.data ?? [];
-        if (records.isEmpty) {
-          return _buildApiMessageCard('No KTMB usage is available.');
-        }
-
-        final latestDate = records.first.date;
-        final latestRecords = records.where((record) {
-          return record.date == latestDate;
-        }).toList();
-        latestRecords.sort((first, second) {
-          return second.ridership.compareTo(first.ridership);
-        });
-
-        return Card(
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Data for ${_formatApiDate(latestDate)}',
-                  style: const TextStyle(
-                    color: AppTheme.secondaryText,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                for (final record in latestRecords) ...[
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.train,
-                        color: Color(0xFF7B1FA2),
-                        size: 20,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(child: Text(record.serviceName)),
-                      Text(
-                        '${record.ridership} trips',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ],
-                  ),
-                  const Divider(height: 20),
-                ],
-                const Text(
-                  'Source: data.gov.my, KTMB and Ministry of Transport',
-                  style: TextStyle(
-                    color: AppTheme.secondaryText,
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildApiLoadingCard(String message) {
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            const SizedBox(width: 12),
-            Expanded(child: Text(message)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildApiMessageCard(String message) {
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            const Icon(Icons.info_outline, color: AppTheme.secondaryText),
-            const SizedBox(width: 12),
-            Expanded(child: Text(message)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildApiErrorCard(String message, VoidCallback onRetry) {
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            const Icon(Icons.cloud_off, color: Colors.red),
-            const SizedBox(width: 12),
-            Expanded(child: Text(message)),
-            TextButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _formatApiDate(String date) {
-    final parts = date.split('-');
-    if (parts.length != 3) return date;
-    return '${parts[2]}/${parts[1]}/${parts[0]}';
-  }
-
-  Widget _buildLiveStatus() {
-    final liveRoutes = _repository.routes.where((route) {
-      return route.liveSupported;
-    }).take(3).toList();
-
-    return Column(
-      children: liveRoutes.map((route) {
-        return Card(
-          margin: const EdgeInsets.only(bottom: 8),
-          child: ListTile(
-            leading: Icon(
-              _modeIcon(route.mode),
-              color: _routeColour(route),
-            ),
-            title: Text('${route.number} - ${route.name}'),
-            subtitle: Text('Every ${route.frequencyMinutes} min'),
-            trailing: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-              decoration: BoxDecoration(
-                color: const Color(0xFFE8F5E9),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Text(
-                'Live supported',
-                style: TextStyle(fontSize: 10, color: Color(0xFF2E7D32)),
-              ),
-            ),
-            onTap: () => _changePage(2),
+            onTap: () => _openFrequentService(service),
           ),
         );
       }).toList(),
@@ -1454,10 +1324,8 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(
-                dialogContext,
-                controller.text.trim(),
-              ),
+              onPressed: () =>
+                  Navigator.pop(dialogContext, controller.text.trim()),
               child: const Text('Add'),
             ),
           ],
@@ -1495,10 +1363,8 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(
-                dialogContext,
-                controller.text.trim(),
-              ),
+              onPressed: () =>
+                  Navigator.pop(dialogContext, controller.text.trim()),
               child: const Text('Update'),
             ),
           ],
@@ -1555,9 +1421,7 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
     FavouriteItem favourite,
     String categoryId,
   ) async {
-    await _storage.updateFavourite(
-      favourite.copyWith(categoryId: categoryId),
-    );
+    await _storage.updateFavourite(favourite.copyWith(categoryId: categoryId));
     await _fetchFavourites();
   }
 
@@ -1567,9 +1431,9 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -1586,7 +1450,10 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
                   const Expanded(
                     child: Text(
                       'Manage Favourites',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                   TextButton.icon(
@@ -1675,7 +1542,10 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
                               ),
                               trailing: IconButton(
                                 onPressed: () => _deleteFavourite(favourite),
-                                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  color: Colors.red,
+                                ),
                               ),
                             ),
                           ),
@@ -1717,11 +1587,6 @@ IconData _modeIcon(String mode) {
   if (mode == 'Monorail') return Icons.commute;
   if (mode == 'Ferry') return Icons.directions_boat;
   return Icons.directions_transit;
-}
-
-Color _routeColour(TransitRoute route) {
-  final hex = route.colourHex.replaceAll('#', '');
-  return Color(int.parse('FF$hex', radix: 16));
 }
 
 String _formatDate(DateTime value) {

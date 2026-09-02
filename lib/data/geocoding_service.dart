@@ -8,10 +8,9 @@ class GeocodingService {
 
   Future<String?> getPlaceName(double latitude, double longitude) async {
     try {
-      final placemarks = await _geocoding.placemarkFromCoordinates(
-        latitude,
-        longitude,
-      );
+      final placemarks = await _geocoding
+          .placemarkFromCoordinates(latitude, longitude)
+          .timeout(const Duration(seconds: 10));
       if (placemarks.isEmpty) return null;
       return _formatPlacemark(placemarks.first);
     } catch (_) {
@@ -24,9 +23,9 @@ class GeocodingService {
     if (query.isEmpty) return null;
 
     try {
-      final locations = await _geocoding.locationFromAddress(
-        '$query, Malaysia',
-      );
+      final locations = await _geocoding
+          .locationFromAddress('$query, Malaysia')
+          .timeout(const Duration(seconds: 10));
 
       for (final location in locations) {
         if (!LocationService.isInsideMalaysia(
