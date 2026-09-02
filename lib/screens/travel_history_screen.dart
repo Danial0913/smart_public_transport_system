@@ -856,7 +856,7 @@ class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             itemCount: _journeys.length,
-            separatorBuilder: (_, __) {
+            separatorBuilder: (_, _) {
               return const SizedBox(height: 10);
             },
             itemBuilder: (context, index) {
@@ -874,7 +874,7 @@ class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
       margin: EdgeInsets.zero,
       child: ExpansionTile(
         leading: CircleAvatar(
-          backgroundColor: _modeColour(firstMode).withOpacity(0.12),
+          backgroundColor: _modeColour(firstMode).withValues(alpha: 0.12),
           child: Icon(_modeIcon(firstMode), color: _modeColour(firstMode)),
         ),
         title: Text(

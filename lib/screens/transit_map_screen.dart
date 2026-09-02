@@ -41,7 +41,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   bool _followUserLocation = true;
   bool _loadingMapArea = false;
   bool _savingCompletedJourney = false;
-  bool _showJourneyInformation = true;
 
   String? _error;
   String _selectedMode = 'All';
@@ -94,7 +93,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       _selectedRoute = null;
       _selectedMode = 'All';
       _followUserLocation = false;
-      _showJourneyInformation = true;
     });
 
     if (_mapReady) {
@@ -721,8 +719,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     final latitude = location.latitude;
     final longitude = location.longitude;
 
-    if (latitude == null || longitude == null) return;
-
     setState(() {
       _currentLocation = location;
     });
@@ -976,7 +972,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
             TileLayer(
               urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               userAgentPackageName:
-              'my.edu.tarumt.smart_tublic_transport_system',
+              'my.edu.tarumt.smart_public_transport_system',
               maxZoom: 19,
               panBuffer: 0,
             ),
