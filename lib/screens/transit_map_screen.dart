@@ -367,7 +367,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       final latestCamera = _mapController.camera;
       final movedToAnotherArea =
           (latestCamera.center.latitude - camera.center.latitude).abs() > 0.1 ||
-          (latestCamera.center.longitude - camera.center.longitude).abs() > 0.1;
+              (latestCamera.center.longitude - camera.center.longitude).abs() > 0.1;
       if (movedToAnotherArea) {
         _onMapPositionChanged(latestCamera, true);
       } else {
@@ -944,7 +944,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
             TileLayer(
               urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               userAgentPackageName:
-                  'my.edu.tarumt.smart_tublic_transport_system',
+              'my.edu.tarumt.smart_tublic_transport_system',
               maxZoom: 19,
               panBuffer: 0,
             ),
@@ -1131,7 +1131,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       _buildJourneyStationMarker(
         stop: journey.legs.first.from,
         label:
-            'Board ${journey.legs.first.route.number} at ${journey.legs.first.from.name}',
+        'Board ${journey.legs.first.route.number} at ${journey.legs.first.from.name}',
         icon: _iconForMode(journey.legs.first.route.mode),
         colour: _routeColour(journey.legs.first.route.colourHex),
       ),
@@ -1145,7 +1145,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
         _buildJourneyStationMarker(
           stop: currentLeg.to,
           label:
-              'Change from ${currentLeg.route.number} to ${nextLeg.route.number} at ${currentLeg.to.name}',
+          'Change from ${currentLeg.route.number} to ${nextLeg.route.number} at ${currentLeg.to.name}',
           icon: Icons.transfer_within_a_station,
           colour: const Color(0xFFF57C00),
         ),
@@ -1156,7 +1156,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
           _buildJourneyStationMarker(
             stop: nextLeg.from,
             label:
-                'Walk and board ${nextLeg.route.number} at ${nextLeg.from.name}',
+            'Walk and board ${nextLeg.route.number} at ${nextLeg.from.name}',
             icon: Icons.directions_walk,
             colour: const Color(0xFF616161),
           ),
@@ -1168,7 +1168,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       _buildJourneyStationMarker(
         stop: journey.legs.last.to,
         label:
-            'Leave ${journey.legs.last.route.number} at ${journey.legs.last.to.name}',
+        'Leave ${journey.legs.last.route.number} at ${journey.legs.last.to.name}',
         icon: Icons.stop_circle_outlined,
         colour: _routeColour(journey.legs.last.route.colourHex),
       ),
@@ -1321,8 +1321,8 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
                   ? 'Journey ${journey.routeSummary}'
                   : route == null
                   ? _mapZoom < 8.5
-                        ? 'Zoom in to view stops'
-                        : '${_renderedStops.length} nearby stops'
+                  ? 'Zoom in to view stops'
+                  : '${_renderedStops.length} nearby stops'
                   : 'Route ${route.number}',
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
@@ -1355,112 +1355,56 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     );
   }
 
+  // Build the journey information panel
   Widget _buildJourneyInformation(JourneyOption journey) {
-    return Card(
-      elevation: 8,
-      margin: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return _buildInformationCard(
+      icon: Icons.navigation,
+      colour: AppTheme.primaryBlue,
+      title: '${journey.origin.name} to ${journey.destination.name}',
+      subtitle: journey.legs.length == 1
+          ? 'Direct transport journey'
+          : '${journey.legs.length} transport legs',
+      onClose: () {
+        setState(() => _activeJourney = null);
+        if (_mapReady) {
+          _refreshVisibleMapContent(_mapController.camera);
+        }
+      },
+      children: [
+        _buildJourneySequence(journey),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: AppTheme.primaryBlue.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.navigation,
-                    color: AppTheme.primaryBlue,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${journey.origin.name} to ${journey.destination.name}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppTheme.mainText,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        journey.legs.length == 1
-                            ? 'Direct transport journey'
-                            : '${journey.legs.length} transport legs',
-                        style: const TextStyle(color: AppTheme.secondaryText),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Close journey',
-                  onPressed: () {
-                    setState(() {
-                      _activeJourney = null;
-                    });
-                  },
-                  icon: const Icon(Icons.close),
-                ),
-              ],
+            Chip(
+              avatar: const Icon(Icons.schedule, size: 18),
+              label: Text('${journey.totalDurationMinutes} min'),
             ),
-            const SizedBox(height: 12),
-            _buildJourneySequence(journey),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildRouteSummary(
-                    'Duration',
-                    '${journey.totalDurationMinutes} min',
-                    Icons.schedule,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _buildRouteSummary(
-                    'Fare',
-                    'RM${journey.totalFare.toStringAsFixed(2)}',
-                    Icons.payments_outlined,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _buildRouteSummary(
-                    'Transfers',
-                    '${journey.transferCount}',
-                    Icons.transfer_within_a_station,
-                  ),
-                ),
-              ],
+            Chip(
+              avatar: const Icon(Icons.payments_outlined, size: 18),
+              label: Text('RM${journey.totalFare.toStringAsFixed(2)}'),
             ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () => _focusJourney(journey),
-                icon: const Icon(Icons.center_focus_strong),
-                label: const Text('Show Entire Journey'),
-              ),
+            Chip(
+              avatar: const Icon(Icons.transfer_within_a_station, size: 18),
+              label: Text('${journey.transferCount} transfer(s)'),
             ),
           ],
         ),
-      ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: () => _focusJourney(journey),
+            icon: const Icon(Icons.center_focus_strong),
+            label: const Text('Show Entire Journey'),
+          ),
+        ),
+      ],
     );
   }
 
+  // Build the walking and transport sequence
   Widget _buildJourneySequence(JourneyOption journey) {
     final steps = <Widget>[];
 
@@ -1468,7 +1412,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       if (steps.isNotEmpty) {
         steps.add(
           const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4),
+            padding: EdgeInsets.symmetric(horizontal: 3),
             child: Icon(
               Icons.chevron_right,
               size: 18,
@@ -1485,12 +1429,12 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
         _buildJourneyStepChip(
           icon: Icons.directions_walk,
           label: '${journey.originWalkingMetres} m',
-          colour: const Color(0xFF616161),
+          colour: Colors.grey.shade700,
         ),
       );
     }
 
-    for (int index = 0; index < journey.legs.length; index++) {
+    for (var index = 0; index < journey.legs.length; index++) {
       final leg = journey.legs[index];
       addStep(
         _buildJourneyStepChip(
@@ -1506,8 +1450,8 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
           addStep(
             _buildJourneyStepChip(
               icon: Icons.directions_walk,
-              label: 'Transfer walk',
-              colour: const Color(0xFF616161),
+              label: 'Walk',
+              colour: Colors.grey.shade700,
             ),
           );
         }
@@ -1519,7 +1463,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
         _buildJourneyStepChip(
           icon: Icons.directions_walk,
           label: '${journey.destinationWalkingMetres} m',
-          colour: const Color(0xFF616161),
+          colour: Colors.grey.shade700,
         ),
       );
     }
@@ -1530,275 +1474,228 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     );
   }
 
+  // Build one journey step
   Widget _buildJourneyStepChip({
     required IconData icon,
     required String label,
     required Color colour,
   }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: colour.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: colour.withValues(alpha: 0.35)),
+    return Chip(
+      visualDensity: VisualDensity.compact,
+      avatar: Icon(icon, size: 17, color: colour),
+      label: Text(
+        label,
+        style: TextStyle(color: colour, fontWeight: FontWeight.bold),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 18, color: colour),
-          const SizedBox(width: 5),
-          Text(
-            label,
-            style: TextStyle(color: colour, fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
+      backgroundColor: colour.withValues(alpha: 0.10),
+      side: BorderSide(color: colour.withValues(alpha: 0.35)),
     );
   }
 
+  // Build the selected stop information panel
   Widget _buildStopInformation(TransitStop stop) {
     final routes = _routesForStop(stop);
     final modes = routes.map((route) => route.mode).toSet();
+    final stationType = modes.length > 1
+        ? 'Transport interchange'
+        : _stationType(modes);
 
-    return Card(
-      elevation: 8,
-      margin: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: _colourForModes(modes).withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    _iconForModes(modes),
-                    color: _colourForModes(modes),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    stop.name,
-                    style: const TextStyle(
-                      color: AppTheme.mainText,
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
-                    ),
+    return _buildInformationCard(
+      icon: _iconForModes(modes),
+      colour: _colourForModes(modes),
+      title: stop.name,
+      subtitle:
+      '$stationType · ${stop.accessible ? "Accessible" : "Accessibility unavailable"}',
+      onClose: () {
+        setState(() => _selectedStop = null);
+      },
+      children: [
+        if (routes.isEmpty)
+          const Text(
+            'No route information is available for this stop.',
+            style: TextStyle(color: AppTheme.secondaryText),
+          )
+        else ...[
+          const Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Select a route',
+                  style: TextStyle(
+                    color: AppTheme.mainText,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-                IconButton(
-                  tooltip: 'Close',
-                  onPressed: () {
-                    setState(() {
-                      _selectedStop = null;
-                    });
-                  },
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _buildDetailRow(
-              Icons.category_outlined,
-              'Type',
-              modes.length > 1 ? 'Transport interchange' : _stationType(modes),
-            ),
-            const SizedBox(height: 8),
-            _buildDetailRow(
-              Icons.route,
-              'Routes',
-              routes.map((route) => route.number).join(', '),
-            ),
-            const SizedBox(height: 8),
-            _buildDetailRow(
-              Icons.accessible,
-              'Accessible',
-              stop.accessible ? 'Yes' : 'No',
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'Select a route',
-              style: TextStyle(
-                color: AppTheme.mainText,
-                fontWeight: FontWeight.bold,
               ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: routes.map((route) {
-                return ActionChip(
-                  avatar: Icon(
-                    _iconForMode(route.mode),
-                    size: 18,
-                    color: _routeColour(route.colourHex),
+              Icon(Icons.swipe, size: 19, color: AppTheme.secondaryText),
+              SizedBox(width: 4),
+              Text(
+                'Swipe',
+                style: TextStyle(
+                  color: AppTheme.secondaryText,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 88,
+            child: GridView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.zero,
+              physics: const BouncingScrollPhysics(),
+              itemCount: routes.length,
+              gridDelegate:
+              const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 6,
+                mainAxisExtent: 94,
+              ),
+              itemBuilder: (context, index) {
+                final route = routes[index];
+                final routeColour = _routeColour(route.colourHex);
+                return Align(
+                  alignment: Alignment.centerLeft,
+                  child: ActionChip(
+                    visualDensity: VisualDensity.compact,
+                    avatar: Icon(
+                      _iconForMode(route.mode),
+                      size: 17,
+                      color: routeColour,
+                    ),
+                    label: Text(
+                      route.number,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    tooltip: '${route.mode} ${route.number}: ${route.name}',
+                    onPressed: () => _showRoute(route),
                   ),
-                  label: Text(route.number),
-                  onPressed: () => _showRoute(route),
                 );
-              }).toList(),
+              },
             ),
-          ],
-        ),
-      ),
+          ),
+        ],
+      ],
     );
   }
 
+  // Build the selected route information panel
   Widget _buildRouteInformation(TransitRoute route) {
     final stops = _repository.stopsForRoute(route);
+    final firstStop = stops.isEmpty ? 'Unknown' : stops.first.name;
+    final lastStop = stops.isEmpty ? 'Unknown' : stops.last.name;
 
-    return Card(
-      elevation: 8,
-      margin: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    return _buildInformationCard(
+      icon: _iconForMode(route.mode),
+      colour: _routeColour(route.colourHex),
+      title: '${route.mode} ${route.number}',
+      subtitle: route.name,
+      onClose: _showAllRoutes,
+      children: [
+        Row(
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: _routeColour(
-                      route.colourHex,
-                    ).withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    _iconForMode(route.mode),
-                    color: _routeColour(route.colourHex),
-                  ),
+            const Icon(Icons.route, size: 19, color: AppTheme.primaryBlue),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '$firstStop → $lastStop',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppTheme.mainText,
+                  fontWeight: FontWeight.w600,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${route.mode} ${route.number}',
-                        style: const TextStyle(
-                          color: AppTheme.mainText,
-                          fontSize: 17,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        route.name,
-                        style: const TextStyle(color: AppTheme.secondaryText),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Close route',
-                  onPressed: _showAllRoutes,
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildRouteSummary(
-                    'Stops',
-                    '${stops.length}',
-                    Icons.location_on_outlined,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _buildRouteSummary(
-                    'Fare',
-                    'RM${route.baseFare.toStringAsFixed(2)}',
-                    Icons.payments_outlined,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _buildRouteSummary(
-                    'Frequency',
-                    '${route.frequencyMinutes} min',
-                    Icons.schedule,
-                  ),
-                ),
-              ],
+              ),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildDetailRow(IconData icon, String title, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 19, color: AppTheme.primaryBlue),
-        const SizedBox(width: 9),
-        SizedBox(
-          width: 78,
-          child: Text(
-            title,
-            style: const TextStyle(color: AppTheme.secondaryText),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(
-              color: AppTheme.mainText,
-              fontWeight: FontWeight.w600,
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            Chip(
+              avatar: const Icon(Icons.location_on_outlined, size: 18),
+              label: Text('${stops.length} stops'),
             ),
-          ),
+            Chip(
+              avatar: const Icon(Icons.payments_outlined, size: 18),
+              label: Text('RM${route.baseFare.toStringAsFixed(2)}'),
+            ),
+            Chip(
+              avatar: const Icon(Icons.schedule, size: 18),
+              label: Text('Every ${route.frequencyMinutes} min'),
+            ),
+            if (route.accessible)
+              const Chip(
+                avatar: Icon(Icons.accessible, size: 18),
+                label: Text('Accessible'),
+              ),
+          ],
         ),
       ],
     );
   }
 
-  Widget _buildRouteSummary(String title, String value, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: AppTheme.primaryBlue.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, size: 20, color: AppTheme.primaryBlue),
-          const SizedBox(height: 5),
-          Text(
-            value,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: AppTheme.mainText,
-              fontWeight: FontWeight.bold,
+  // Build a reusable information card
+  Widget _buildInformationCard({
+    required IconData icon,
+    required Color colour,
+    required String title,
+    required String subtitle,
+    required VoidCallback onClose,
+    required List<Widget> children,
+  }) {
+    return Card(
+      elevation: 6,
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              minVerticalPadding: 0,
+              leading: CircleAvatar(
+                backgroundColor: colour.withValues(alpha: 0.12),
+                child: Icon(icon, color: colour),
+              ),
+              title: Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppTheme.mainText,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              subtitle: Text(
+                subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppTheme.secondaryText),
+              ),
+              trailing: IconButton(
+                tooltip: 'Close',
+                onPressed: onClose,
+                icon: const Icon(Icons.close),
+              ),
             ),
-          ),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: AppTheme.secondaryText, fontSize: 11),
-          ),
-        ],
+            if (children.isNotEmpty) ...[
+              const Divider(height: 8),
+              const SizedBox(height: 6),
+              ...children,
+            ],
+          ],
+        ),
       ),
     );
   }
-
   IconData _iconForModes(Set<String> modes) {
     if (modes.length > 1) {
       return Icons.hub;
