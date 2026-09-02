@@ -4,6 +4,7 @@ import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
 
 import '../models/transit_models.dart';
+import '../models/travel_history_models.dart';
 
 class LocalStorageService {
   LocalStorageService._();
@@ -117,6 +118,42 @@ class LocalStorageService {
               .add(const Duration(microseconds: 1))
               .toIso8601String(),
         });
+        // Completed journey table
+        await database.execute('''
+          CREATE TABLE completed_journeys(
+          id TEXT PRIMARY KEY,
+          origin TEXT NOT NULL,
+          destination TEXT NOT NULL,
+          route_summary TEXT NOT NULL,
+          completed_at TEXT NOT NULL,
+          duration_minutes INTEGER NOT NULL,
+          fare REAL NOT NULL,
+          walking_metres INTEGER NOT NULL DEFAULT 0
+        )
+      ''');
+        // Completed journey transport legs
+        await database.execute('''
+          CREATE TABLE completed_journey_legs(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          journey_id TEXT NOT NULL,
+          leg_order INTEGER NOT NULL,
+          route_number TEXT NOT NULL,
+          mode TEXT NOT NULL,
+          from_stop_name TEXT NOT NULL,
+          to_stop_name TEXT NOT NULL,
+          FOREIGN KEY(journey_id)
+          REFERENCES completed_journeys(id)
+          ON DELETE CASCADE
+        )
+      ''');
+
+        // Monthly transport budget
+        await database.execute('''
+          CREATE TABLE monthly_travel_budgets(
+          month_key TEXT PRIMARY KEY,
+          amount REAL NOT NULL
+        )
+      ''');
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -590,5 +627,162 @@ class LocalStorageService {
     } catch (_) {
       return const [];
     }
+  }
+
+  // Record a completed journey
+  Future<void> recordCompletedJourney(JourneyOption journey) async {
+    final database = await _db;
+    final completedAt = DateTime.now();
+
+    final journeyId = 'completed-${completedAt.microsecondsSinceEpoch}';
+
+    await database.transaction((transaction) async {
+      await transaction.insert('completed_journeys', {
+        'id': journeyId,
+        'origin': journey.origin.name,
+        'destination': journey.destination.name,
+        'route_summary': journey.routeSummary,
+        'completed_at': completedAt.toIso8601String(),
+        'duration_minutes': journey.totalDurationMinutes,
+        'fare': journey.totalFare,
+        'walking_metres': journey.walkingMetres,
+      });
+
+      for (var index = 0; index < journey.legs.length; index++) {
+        final leg = journey.legs[index];
+
+        await transaction.insert('completed_journey_legs', {
+          'journey_id': journeyId,
+          'leg_order': index,
+          'route_number': leg.route.number,
+          'mode': leg.route.mode,
+          'from_stop_name': leg.from.name,
+          'to_stop_name': leg.to.name,
+        });
+      }
+    });
+  }
+
+  // Get completed journeys
+  Future<List<CompletedJourney>> getCompletedJourneys({
+    DateTime? start,
+    DateTime? end,
+  }) async {
+    final database = await _db;
+
+    final conditions = <String>[];
+    final arguments = <Object?>[];
+
+    if (start != null) {
+      conditions.add('completed_at >= ?');
+      arguments.add(start.toIso8601String());
+    }
+
+    if (end != null) {
+      conditions.add('completed_at < ?');
+      arguments.add(end.toIso8601String());
+    }
+
+    final journeyRows = await database.query(
+      'completed_journeys',
+      where: conditions.isEmpty ? null : conditions.join(' AND '),
+      whereArgs: arguments.isEmpty ? null : arguments,
+      orderBy: 'completed_at DESC',
+    );
+
+    final journeys = <CompletedJourney>[];
+
+    for (final journeyRow in journeyRows) {
+      final journeyId = journeyRow['id'] as String;
+
+      final legRows = await database.query(
+        'completed_journey_legs',
+        where: 'journey_id = ?',
+        whereArgs: [journeyId],
+        orderBy: 'leg_order ASC',
+      );
+
+      final legs = legRows.map((legRow) {
+        return CompletedJourneyLeg(
+          routeNumber: legRow['route_number'] as String,
+          mode: legRow['mode'] as String,
+          fromStopName: legRow['from_stop_name'] as String,
+          toStopName: legRow['to_stop_name'] as String,
+        );
+      }).toList();
+
+      journeys.add(
+        CompletedJourney(
+          id: journeyId,
+          origin: journeyRow['origin'] as String,
+          destination: journeyRow['destination'] as String,
+          routeSummary: journeyRow['route_summary'] as String,
+          completedAt: DateTime.parse(journeyRow['completed_at'] as String),
+          durationMinutes: journeyRow['duration_minutes'] as int,
+          fare: (journeyRow['fare'] as num).toDouble(),
+          walkingMetres: journeyRow['walking_metres'] as int? ?? 0,
+          legs: legs,
+        ),
+      );
+    }
+
+    return journeys;
+  }
+
+  // Convert a date into a monthly database key
+  String _monthKey(DateTime month) {
+    final monthNumber = month.month.toString().padLeft(2, '0');
+
+    return '${month.year}-$monthNumber';
+  }
+
+  // Get the monthly transport budget
+  Future<double?> getMonthlyTravelBudget(DateTime month) async {
+    final database = await _db;
+
+    final rows = await database.query(
+      'monthly_travel_budgets',
+      where: 'month_key = ?',
+      whereArgs: [_monthKey(month)],
+      limit: 1,
+    );
+
+    if (rows.isEmpty) {
+      return null;
+    }
+
+    return (rows.first['amount'] as num).toDouble();
+  }
+
+  // Save or update the monthly transport budget
+  Future<void> setMonthlyTravelBudget({
+    required DateTime month,
+    required double amount,
+  }) async {
+    final database = await _db;
+
+    await database.insert('monthly_travel_budgets', {
+      'month_key': _monthKey(month),
+      'amount': amount,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  // Delete a completed journey
+  Future<void> deleteCompletedJourney(String journeyId) async {
+    final database = await _db;
+
+    await database.transaction((transaction) async {
+      await transaction.delete(
+        'completed_journey_legs',
+        where: 'journey_id = ?',
+        whereArgs: [journeyId],
+      );
+
+      await transaction.delete(
+        'completed_journeys',
+        where: 'id = ?',
+        whereArgs: [journeyId],
+      );
+    });
   }
 }

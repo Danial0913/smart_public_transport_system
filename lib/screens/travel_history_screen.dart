@@ -1,679 +1,1048 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+
+import '../data/local_storage_service.dart';
+import '../models/travel_history_models.dart';
 import '../theme/app_theme.dart';
 
 class TravelHistoryScreen extends StatefulWidget {
   const TravelHistoryScreen({super.key});
 
   @override
-  State<TravelHistoryScreen> createState() => _TravelHistoryScreenState();
+  State<TravelHistoryScreen> createState() {
+    return _TravelHistoryScreenState();
+  }
 }
 
 class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
+  final LocalStorageService _storage = LocalStorageService.instance;
+
+  final List<String> _periods = const ['Today', 'This Week', 'This Month'];
+
   String _selectedPeriod = 'This Month';
 
-  final List<String> _periods = ['This Week', 'This Month', 'This Year'];
+  List<CompletedJourney> _journeys = [];
 
-  final List<TravelRecord> _travelRecords = const [
-    TravelRecord(
-      origin: 'KOMTAR Bus Terminal',
-      destination: 'Queensbay Mall',
-      date: '22 July 2026',
-      time: '10:30 AM',
-      transport: 'Bus 401E',
-      duration: '35 min',
-      expense: 2.70,
-      icon: Icons.directions_bus,
-      colour: AppTheme.primaryBlue,
-    ),
-    TravelRecord(
-      origin: 'Butterworth Station',
-      destination: 'Bukit Mertajam',
-      date: '20 July 2026',
-      time: '2:15 PM',
-      transport: 'KTM Komuter',
-      duration: '22 min',
-      expense: 3.60,
-      icon: Icons.train,
-      colour: Color(0xFF7B1FA2),
-    ),
-    TravelRecord(
-      origin: 'Raja Tun Uda Terminal',
-      destination: 'Pangkalan Weld',
-      date: '18 July 2026',
-      time: '9:00 AM',
-      transport: 'Penang Ferry',
-      duration: '15 min',
-      expense: 2.00,
-      icon: Icons.directions_boat,
-      colour: Color(0xFF00897B),
-    ),
-    TravelRecord(
-      origin: 'KOMTAR',
-      destination: 'Gurney Plaza',
-      date: '16 July 2026',
-      time: '5:40 PM',
-      transport: 'Bus 103',
-      duration: '28 min',
-      expense: 2.00,
-      icon: Icons.directions_bus,
-      colour: AppTheme.primaryBlue,
-    ),
-  ];
+  bool _loading = true;
+  String? _error;
+
+  double? _monthlyBudget;
+  double _monthlySpending = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final now = DateTime.now();
+      final periodStart = _periodStart(now);
+
+      final journeys = await _storage.getCompletedJourneys(
+        start: periodStart,
+        end: now.add(const Duration(days: 1)),
+      );
+
+      final monthStart = DateTime(now.year, now.month);
+
+      final nextMonth = DateTime(now.year, now.month + 1);
+
+      final monthJourneys = await _storage.getCompletedJourneys(
+        start: monthStart,
+        end: nextMonth,
+      );
+
+      final budget = await _storage.getMonthlyTravelBudget(now);
+
+      var monthSpending = 0.0;
+
+      for (final journey in monthJourneys) {
+        monthSpending += journey.fare;
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _journeys = journeys;
+        _monthlyBudget = budget;
+        _monthlySpending = monthSpending;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _error = error.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  DateTime _periodStart(DateTime now) {
+    if (_selectedPeriod == 'Today') {
+      return DateTime(now.year, now.month, now.day);
+    }
+
+    if (_selectedPeriod == 'This Week') {
+      final startOfToday = DateTime(now.year, now.month, now.day);
+
+      return startOfToday.subtract(Duration(days: now.weekday - 1));
+    }
+
+    return DateTime(now.year, now.month);
+  }
+
+  double get _totalSpending {
+    var total = 0.0;
+
+    for (final journey in _journeys) {
+      total += journey.fare;
+    }
+
+    return total;
+  }
+
+  int get _totalDuration {
+    var total = 0;
+
+    for (final journey in _journeys) {
+      total += journey.durationMinutes;
+    }
+
+    return total;
+  }
+
+  double get _averageFare {
+    if (_journeys.isEmpty) return 0;
+
+    return _totalSpending / _journeys.length;
+  }
+
+  Map<String, int> get _routeCounts {
+    final counts = <String, int>{};
+
+    for (final journey in _journeys) {
+      for (final leg in journey.legs) {
+        counts[leg.routeNumber] = (counts[leg.routeNumber] ?? 0) + 1;
+      }
+    }
+
+    return counts;
+  }
+
+  Map<String, int> get _modeCounts {
+    final counts = <String, int>{};
+
+    for (final journey in _journeys) {
+      for (final leg in journey.legs) {
+        counts[leg.mode] = (counts[leg.mode] ?? 0) + 1;
+      }
+    }
+
+    return counts;
+  }
+
+  Map<String, int> get _stationCounts {
+    final counts = <String, int>{};
+
+    for (final journey in _journeys) {
+      final stationsUsed = <String>{};
+
+      for (final leg in journey.legs) {
+        stationsUsed.add(leg.fromStopName);
+        stationsUsed.add(leg.toStopName);
+      }
+
+      for (final station in stationsUsed) {
+        counts[station] = (counts[station] ?? 0) + 1;
+      }
+    }
+
+    return counts;
+  }
+
+  List<MapEntry<String, int>> _topEntries(
+    Map<String, int> values, {
+    int limit = 3,
+  }) {
+    final entries = values.entries.toList();
+
+    entries.sort((first, second) {
+      final countComparison = second.value.compareTo(first.value);
+
+      if (countComparison != 0) {
+        return countComparison;
+      }
+
+      return first.key.compareTo(second.key);
+    });
+
+    return entries.take(limit).toList();
+  }
+
+  Future<void> _selectPeriod(String period) async {
+    setState(() {
+      _selectedPeriod = period;
+    });
+
+    await _loadHistory();
+  }
+
+  Future<void> _setBudget() async {
+    final budgetCtrl = TextEditingController(
+      text: _monthlyBudget?.toStringAsFixed(2) ?? '',
+    );
+
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Set Monthly Budget'),
+          content: TextField(
+            controller: budgetCtrl,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: 'Budget amount',
+              prefixText: 'RM ',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = double.tryParse(budgetCtrl.text.trim());
+
+                if (value == null || value <= 0) {
+                  return;
+                }
+
+                Navigator.pop(dialogContext, value);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    budgetCtrl.dispose();
+
+    if (amount == null) return;
+
+    await _storage.setMonthlyTravelBudget(
+      month: DateTime.now(),
+      amount: amount,
+    );
+
+    await _loadHistory();
+  }
+
+  Future<void> _deleteJourney(CompletedJourney journey) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Delete Travel Record?'),
+          content: Text(
+            '${journey.origin} to '
+            '${journey.destination}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    await _storage.deleteCompletedJourney(journey.id);
+
+    await _loadHistory();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: AppTheme.background,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          _buildPeriodSelector(),
-          const SizedBox(height: 18),
-          _buildSectionTitle(
-            title: 'Travel Summary',
-            subtitle: 'Your public transport activity',
-          ),
-          const SizedBox(height: 12),
-          _buildSummaryCards(),
-          const SizedBox(height: 22),
-          _buildExpenseChart(),
-          const SizedBox(height: 22),
-          _buildTransportBreakdown(),
-          const SizedBox(height: 22),
-          _buildHistoryHeader(),
-          const SizedBox(height: 12),
-          _buildTravelHistory(),
-        ],
-      ),
-    );
-  }
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-  Widget _buildPeriodSelector() {
-    return Row(
-      children: [
-        const Expanded(
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                'My Travel Activity',
-                style: TextStyle(
-                  color: AppTheme.mainText,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                ),
+              const Icon(Icons.error_outline, size: 48, color: Colors.red),
+              const SizedBox(height: 12),
+              const Text(
+                'Unable to load travel history',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
-              SizedBox(height: 3),
-              Text(
-                'Review your trips and transportation expenses.',
-                style: TextStyle(color: AppTheme.secondaryText, fontSize: 13),
+              const SizedBox(height: 8),
+              Text(_error!, textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: _loadHistory,
+                child: const Text('Try Again'),
               ),
             ],
           ),
         ),
-        const SizedBox(width: 10),
-        PopupMenuButton<String>(
-          initialValue: _selectedPeriod,
-          onSelected: (value) {
-            setState(() {
-              _selectedPeriod = value;
-            });
-          },
-          itemBuilder: (context) {
-            return _periods.map((period) {
-              return PopupMenuItem<String>(value: period, child: Text(period));
-            }).toList();
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: AppTheme.border),
-            ),
-            child: Row(
-              children: [
-                Text(
-                  _selectedPeriod,
-                  style: const TextStyle(
-                    color: AppTheme.mainText,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(width: 5),
-                const Icon(Icons.keyboard_arrow_down, size: 18),
-              ],
-            ),
+      );
+    }
+
+    return Container(
+      color: AppTheme.background,
+      child: RefreshIndicator(
+        onRefresh: _loadHistory,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          children: [
+            _buildHeader(),
+            const SizedBox(height: 16),
+            _buildPeriodSelector(),
+            const SizedBox(height: 18),
+            _buildSummary(),
+            const SizedBox(height: 18),
+            _buildBudgetCard(),
+            const SizedBox(height: 18),
+            _buildSpendingChart(),
+            const SizedBox(height: 18),
+            _buildTransportUsage(),
+            const SizedBox(height: 18),
+            _buildFrequentRoutes(),
+            const SizedBox(height: 18),
+            _buildFrequentStations(),
+            const SizedBox(height: 18),
+            _buildHistoryList(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'History & Analytics',
+          style: TextStyle(
+            color: AppTheme.mainText,
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
           ),
+        ),
+        SizedBox(height: 4),
+        Text(
+          'Completed journeys and transport expenses',
+          style: TextStyle(color: AppTheme.secondaryText),
         ),
       ],
     );
   }
 
-  Widget _buildSectionTitle({required String title, required String subtitle}) {
+  Widget _buildPeriodSelector() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: _periods.map((period) {
+          final selected = period == _selectedPeriod;
+
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ChoiceChip(
+              label: Text(period),
+              selected: selected,
+              onSelected: (_) {
+                _selectPeriod(period);
+              },
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildSummary() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title,
-          style: const TextStyle(
+        const Text(
+          'Travel Summary',
+          style: TextStyle(
             color: AppTheme.mainText,
             fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
         ),
-        const SizedBox(height: 3),
-        Text(
-          subtitle,
-          style: const TextStyle(color: AppTheme.secondaryText, fontSize: 13),
+        const SizedBox(height: 10),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          childAspectRatio: 1.45,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          children: [
+            _buildSummaryCard(
+              title: 'Total Trips',
+              value: '${_journeys.length}',
+              icon: Icons.route,
+              colour: AppTheme.primaryBlue,
+            ),
+            _buildSummaryCard(
+              title: 'Total Spending',
+              value: 'RM${_totalSpending.toStringAsFixed(2)}',
+              icon: Icons.payments_outlined,
+              colour: const Color(0xFFF57C00),
+            ),
+            _buildSummaryCard(
+              title: 'Average Fare',
+              value: 'RM${_averageFare.toStringAsFixed(2)}',
+              icon: Icons.calculate_outlined,
+              colour: const Color(0xFF00897B),
+            ),
+            _buildSummaryCard(
+              title: 'Travel Time',
+              value: _formatDuration(_totalDuration),
+              icon: Icons.schedule,
+              colour: const Color(0xFF7B1FA2),
+            ),
+          ],
         ),
       ],
-    );
-  }
-
-  Widget _buildSummaryCards() {
-    return SizedBox(
-      height: 120,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        children: [
-          _buildSummaryCard(
-            title: 'Total Trips',
-            value: '24',
-            unit: 'journeys',
-            icon: Icons.route_outlined,
-            colour: AppTheme.primaryBlue,
-          ),
-          _buildSummaryCard(
-            title: 'Total Expenses',
-            value: 'RM68.40',
-            unit: 'this month',
-            icon: Icons.account_balance_wallet_outlined,
-            colour: const Color(0xFFF57C00),
-          ),
-          _buildSummaryCard(
-            title: 'Travel Time',
-            value: '12h 45m',
-            unit: 'total duration',
-            icon: Icons.schedule,
-            colour: const Color(0xFF7B1FA2),
-          ),
-          _buildSummaryCard(
-            title: 'CO₂ Saved',
-            value: '8.6 kg',
-            unit: 'estimated',
-            icon: Icons.eco_outlined,
-            colour: const Color(0xFF2E7D32),
-          ),
-        ],
-      ),
     );
   }
 
   Widget _buildSummaryCard({
     required String title,
     required String value,
-    required String unit,
     required IconData icon,
     required Color colour,
   }) {
-    return Container(
-      width: 150,
-      margin: const EdgeInsets.only(right: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: colour.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, color: colour, size: 20),
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(13),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: colour),
+            const Spacer(),
+            Text(
+              value,
+              style: TextStyle(
+                color: colour,
+                fontSize: 19,
+                fontWeight: FontWeight.bold,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 2,
-                  style: const TextStyle(
-                    color: AppTheme.secondaryText,
-                    fontSize: 11,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const Spacer(),
-          Text(
-            value,
-            style: TextStyle(
-              color: colour,
-              fontSize: 19,
-              fontWeight: FontWeight.bold,
             ),
-          ),
-          Text(
-            unit,
-            style: const TextStyle(color: AppTheme.secondaryText, fontSize: 11),
-          ),
-        ],
+            Text(
+              title,
+              style: const TextStyle(
+                color: AppTheme.secondaryText,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildExpenseChart() {
-    final List<ExpenseData> expenses = [
-      const ExpenseData('Week 1', 12.40),
-      const ExpenseData('Week 2', 18.60),
-      const ExpenseData('Week 3', 15.20),
-      const ExpenseData('Week 4', 22.20),
-    ];
+  Widget _buildBudgetCard() {
+    final budget = _monthlyBudget;
 
-    const double maximumExpense = 25;
+    final progress = budget == null || budget <= 0
+        ? 0.0
+        : (_monthlySpending / budget).clamp(0.0, 1.0).toDouble();
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Monthly Expenses',
-                  style: TextStyle(
-                    color: AppTheme.mainText,
-                    fontSize: 17,
-                    fontWeight: FontWeight.bold,
+    final remaining = budget == null
+        ? 0.0
+        : math.max(0, budget - _monthlySpending);
+
+    final exceeded = budget != null && _monthlySpending > budget;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Monthly Transport Budget',
+                    style: TextStyle(
+                      color: AppTheme.mainText,
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
+                TextButton.icon(
+                  onPressed: _setBudget,
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  label: Text(budget == null ? 'Set' : 'Edit'),
+                ),
+              ],
+            ),
+            if (budget == null)
+              const Text(
+                'No monthly budget has been set.',
+                style: TextStyle(color: AppTheme.secondaryText),
+              )
+            else ...[
+              Text(
+                'RM${_monthlySpending.toStringAsFixed(2)} '
+                'of RM${budget.toStringAsFixed(2)} used',
               ),
-              Icon(Icons.bar_chart, color: Color(0xFFF57C00)),
+              const SizedBox(height: 10),
+              LinearProgressIndicator(
+                value: progress,
+                minHeight: 10,
+                borderRadius: BorderRadius.circular(8),
+                color: exceeded ? Colors.red : AppTheme.primaryBlue,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                exceeded
+                    ? 'Budget exceeded by '
+                          'RM${(_monthlySpending - budget).toStringAsFixed(2)}'
+                    : 'RM${remaining.toStringAsFixed(2)} remaining',
+                style: TextStyle(
+                  color: exceeded ? Colors.red : AppTheme.secondaryText,
+                  fontWeight: exceeded ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
             ],
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Public transport spending by week',
-            style: TextStyle(color: AppTheme.secondaryText, fontSize: 12),
-          ),
-          const SizedBox(height: 22),
-          SizedBox(
-            height: 160,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: expenses.map((expense) {
-                final double barHeight =
-                    (expense.amount / maximumExpense) * 105;
+          ],
+        ),
+      ),
+    );
+  }
 
-                return Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 7),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Text(
-                          'RM${expense.amount.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                            color: AppTheme.mainText,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
+  Widget _buildSpendingChart() {
+    final points = _spendingPoints();
+
+    var maximum = 0.0;
+
+    for (final point in points) {
+      maximum = math.max(maximum, point.amount);
+    }
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Expense Chart',
+              style: TextStyle(
+                color: AppTheme.mainText,
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Spending for $_selectedPeriod',
+              style: const TextStyle(color: AppTheme.secondaryText),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              height: 170,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: points.map((point) {
+                  final barHeight = maximum == 0
+                      ? 0.0
+                      : (point.amount / maximum) * 105;
+
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 3),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Text(
+                            point.amount == 0
+                                ? '-'
+                                : point.amount.toStringAsFixed(1),
+                            style: const TextStyle(fontSize: 9),
                           ),
-                        ),
-                        const SizedBox(height: 5),
-                        Container(
-                          height: barHeight,
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [Color(0xFFFFA726), Color(0xFFF57C00)],
+                          const SizedBox(height: 4),
+                          Container(
+                            height: math.max(3, barHeight),
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryBlue,
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(5),
+                              ),
                             ),
-                            borderRadius: const BorderRadius.vertical(
-                              top: Radius.circular(7),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            point.label,
+                            maxLines: 1,
+                            style: const TextStyle(
+                              color: AppTheme.secondaryText,
+                              fontSize: 9,
                             ),
                           ),
-                        ),
-                        const SizedBox(height: 7),
-                        Text(
-                          expense.week,
-                          style: const TextStyle(
-                            color: AppTheme.secondaryText,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<_SpendingPoint> _spendingPoints() {
+    if (_selectedPeriod == 'Today') {
+      final values = <String, double>{
+        'Morning': 0,
+        'Afternoon': 0,
+        'Evening': 0,
+        'Night': 0,
+      };
+
+      for (final journey in _journeys) {
+        final hour = journey.completedAt.hour;
+
+        final label = hour < 12
+            ? 'Morning'
+            : hour < 17
+            ? 'Afternoon'
+            : hour < 21
+            ? 'Evening'
+            : 'Night';
+
+        values[label] = values[label]! + journey.fare;
+      }
+
+      return values.entries.map((entry) {
+        return _SpendingPoint(entry.key.substring(0, 3), entry.value);
+      }).toList();
+    }
+
+    if (_selectedPeriod == 'This Week') {
+      const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+      final values = List<double>.filled(7, 0);
+
+      for (final journey in _journeys) {
+        final index = journey.completedAt.weekday - 1;
+
+        values[index] += journey.fare;
+      }
+
+      return List.generate(7, (index) {
+        return _SpendingPoint(labels[index], values[index]);
+      });
+    }
+
+    final values = List<double>.filled(5, 0);
+
+    for (final journey in _journeys) {
+      final weekIndex = ((journey.completedAt.day - 1) ~/ 7).clamp(0, 4);
+
+      values[weekIndex] += journey.fare;
+    }
+
+    return List.generate(5, (index) {
+      return _SpendingPoint('W${index + 1}', values[index]);
+    });
+  }
+
+  Widget _buildTransportUsage() {
+    final entries = _topEntries(_modeCounts, limit: 6);
+
+    final total = entries.fold<int>(0, (sum, entry) => sum + entry.value);
+
+    return _buildAnalyticsCard(
+      title: 'Transport Usage',
+      subtitle: 'Frequently used transport modes',
+      child: entries.isEmpty
+          ? const Text('No transport data yet.')
+          : Column(
+              children: entries.map((entry) {
+                final percentage = total == 0 ? 0.0 : entry.value / total;
+
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Row(
+                    children: [
+                      Icon(_modeIcon(entry.key), color: _modeColour(entry.key)),
+                      const SizedBox(width: 9),
+                      SizedBox(width: 65, child: Text(entry.key)),
+                      Expanded(
+                        child: LinearProgressIndicator(
+                          value: percentage,
+                          minHeight: 8,
+                          borderRadius: BorderRadius.circular(6),
+                          color: _modeColour(entry.key),
+                        ),
+                      ),
+                      const SizedBox(width: 9),
+                      Text('${entry.value}'),
+                    ],
                   ),
                 );
               }).toList(),
             ),
-          ),
-        ],
-      ),
     );
   }
 
-  Widget _buildTransportBreakdown() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Transport Usage',
-            style: TextStyle(
-              color: AppTheme.mainText,
-              fontSize: 17,
-              fontWeight: FontWeight.bold,
+  Widget _buildFrequentRoutes() {
+    final routes = _topEntries(_routeCounts);
+
+    return _buildRankingCard(
+      title: 'Frequently Used Routes',
+      icon: Icons.route,
+      entries: routes,
+    );
+  }
+
+  Widget _buildFrequentStations() {
+    final stations = _topEntries(_stationCounts);
+
+    return _buildRankingCard(
+      title: 'Frequently Used Stations',
+      icon: Icons.location_on_outlined,
+      entries: stations,
+    );
+  }
+
+  Widget _buildRankingCard({
+    required String title,
+    required IconData icon,
+    required List<MapEntry<String, int>> entries,
+  }) {
+    return _buildAnalyticsCard(
+      title: title,
+      subtitle: 'Based on completed journeys',
+      child: entries.isEmpty
+          ? const Text('No journey data yet.')
+          : Column(
+              children: List.generate(entries.length, (index) {
+                final entry = entries[index];
+
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(child: Text('${index + 1}')),
+                  title: Text(entry.key),
+                  trailing: Text('${entry.value} trip(s)'),
+                );
+              }),
             ),
-          ),
-          SizedBox(height: 4),
-          Text(
-            'Your most frequently used transport modes',
-            style: TextStyle(color: AppTheme.secondaryText, fontSize: 12),
-          ),
-          SizedBox(height: 18),
-          TransportUsageRow(
-            title: 'Bus',
-            percentage: 0.58,
-            numberOfTrips: 14,
-            icon: Icons.directions_bus,
-            colour: AppTheme.primaryBlue,
-          ),
-          SizedBox(height: 15),
-          TransportUsageRow(
-            title: 'Train',
-            percentage: 0.25,
-            numberOfTrips: 6,
-            icon: Icons.train,
-            colour: Color(0xFF7B1FA2),
-          ),
-          SizedBox(height: 15),
-          TransportUsageRow(
-            title: 'Ferry',
-            percentage: 0.17,
-            numberOfTrips: 4,
-            icon: Icons.directions_boat,
-            colour: Color(0xFF00897B),
-          ),
-        ],
+    );
+  }
+
+  Widget _buildAnalyticsCard({
+    required String title,
+    required String subtitle,
+    required Widget child,
+  }) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                color: AppTheme.mainText,
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(
+              subtitle,
+              style: const TextStyle(
+                color: AppTheme.secondaryText,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 15),
+            child,
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildHistoryHeader() {
-    return Row(
+  Widget _buildHistoryList() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Expanded(
-          child: Text(
-            'Recent Journeys',
-            style: TextStyle(
-              color: AppTheme.mainText,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
+        Text(
+          'Completed Journeys (${_journeys.length})',
+          style: const TextStyle(
+            color: AppTheme.mainText,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
           ),
         ),
-        TextButton.icon(
-          onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Travel history filter selected')),
-            );
-          },
-          icon: const Icon(Icons.filter_list, size: 18),
-          label: const Text('Filter'),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTravelHistory() {
-    return ListView.separated(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: _travelRecords.length,
-      separatorBuilder: (context, index) {
-        return const SizedBox(height: 12);
-      },
-      itemBuilder: (context, index) {
-        return _buildTravelRecordCard(_travelRecords[index]);
-      },
-    );
-  }
-
-  Widget _buildTravelRecordCard(TravelRecord record) {
-    return Container(
-      padding: const EdgeInsets.all(15),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: record.colour.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(record.icon, color: record.colour),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  record.transport,
-                  style: const TextStyle(
-                    color: AppTheme.mainText,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              Text(
-                'RM${record.expense.toStringAsFixed(2)}',
-                style: const TextStyle(
-                  color: Color(0xFFF57C00),
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Column(
-                children: [
-                  Icon(Icons.circle, size: 12, color: record.colour),
-                  Container(width: 2, height: 25, color: AppTheme.border),
-                  const Icon(
-                    Icons.location_on,
-                    size: 17,
-                    color: Color(0xFFD32F2F),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 10),
-              Expanded(
+        const SizedBox(height: 10),
+        if (_journeys.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(30),
+              child: Center(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      record.origin,
-                      style: const TextStyle(
-                        color: AppTheme.mainText,
-                        fontSize: 13,
-                      ),
+                    Icon(
+                      Icons.history,
+                      size: 48,
+                      color: AppTheme.secondaryText,
                     ),
-                    const SizedBox(height: 19),
+                    SizedBox(height: 10),
+                    Text('No completed journeys yet.'),
+                    SizedBox(height: 4),
                     Text(
-                      record.destination,
-                      style: const TextStyle(
-                        color: AppTheme.mainText,
-                        fontSize: 13,
-                      ),
+                      'Complete a journey from the map '
+                      'to record it here.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: AppTheme.secondaryText),
                     ),
                   ],
                 ),
               ),
-            ],
+            ),
+          )
+        else
+          ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _journeys.length,
+            separatorBuilder: (_, __) {
+              return const SizedBox(height: 10);
+            },
+            itemBuilder: (context, index) {
+              return _buildJourneyCard(_journeys[index]);
+            },
           ),
-          const Divider(height: 25),
-          Row(
-            children: [
-              const Icon(
-                Icons.calendar_today_outlined,
-                size: 14,
-                color: AppTheme.secondaryText,
-              ),
-              const SizedBox(width: 5),
-              Text(
-                record.date,
-                style: const TextStyle(
-                  color: AppTheme.secondaryText,
-                  fontSize: 11,
+      ],
+    );
+  }
+
+  Widget _buildJourneyCard(CompletedJourney journey) {
+    final firstMode = journey.legs.isEmpty ? 'Bus' : journey.legs.first.mode;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: ExpansionTile(
+        leading: CircleAvatar(
+          backgroundColor: _modeColour(firstMode).withOpacity(0.12),
+          child: Icon(_modeIcon(firstMode), color: _modeColour(firstMode)),
+        ),
+        title: Text(
+          '${journey.origin} → '
+          '${journey.destination}',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          '${_formatDate(journey.completedAt)} · '
+          '${_formatTime(journey.completedAt)}',
+        ),
+        trailing: Text(
+          'RM${journey.fare.toStringAsFixed(2)}',
+          style: const TextStyle(
+            color: Color(0xFFF57C00),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+            child: Column(
+              children: [
+                const Divider(),
+                _detailRow(Icons.route, 'Routes', journey.routeSummary),
+                _detailRow(
+                  Icons.schedule,
+                  'Duration',
+                  '${journey.durationMinutes} min',
                 ),
-              ),
-              const SizedBox(width: 12),
-              const Icon(
-                Icons.schedule,
-                size: 14,
-                color: AppTheme.secondaryText,
-              ),
-              const SizedBox(width: 5),
-              Text(
-                record.time,
-                style: const TextStyle(
-                  color: AppTheme.secondaryText,
-                  fontSize: 11,
+                _detailRow(
+                  Icons.directions_walk,
+                  'Walking',
+                  '${journey.walkingMetres} m',
                 ),
-              ),
-              const Spacer(),
-              Text(
-                record.duration,
-                style: TextStyle(
-                  color: record.colour,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
+                for (final leg in journey.legs)
+                  _detailRow(
+                    _modeIcon(leg.mode),
+                    '${leg.mode} ${leg.routeNumber}',
+                    '${leg.fromStopName} → '
+                        '${leg.toStopName}',
+                  ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () {
+                      _deleteJourney(journey);
+                    },
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('Delete'),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
     );
   }
-}
 
-class TransportUsageRow extends StatelessWidget {
-  final String title;
-  final double percentage;
-  final int numberOfTrips;
-  final IconData icon;
-  final Color colour;
-
-  const TransportUsageRow({
-    super.key,
-    required this.title,
-    required this.percentage,
-    required this.numberOfTrips,
-    required this.icon,
-    required this.colour,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, color: colour, size: 22),
-        const SizedBox(width: 10),
-        SizedBox(
-          width: 48,
-          child: Text(
-            title,
-            style: const TextStyle(
-              color: AppTheme.mainText,
-              fontWeight: FontWeight.w600,
+  Widget _detailRow(IconData icon, String title, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 19, color: AppTheme.primaryBlue),
+          const SizedBox(width: 9),
+          SizedBox(
+            width: 78,
+            child: Text(
+              title,
+              style: const TextStyle(color: AppTheme.secondaryText),
             ),
           ),
-        ),
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: percentage,
-              minHeight: 9,
-              backgroundColor: colour.withOpacity(0.10),
-              valueColor: AlwaysStoppedAnimation<Color>(colour),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: AppTheme.mainText,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 10),
-        SizedBox(
-          width: 48,
-          child: Text(
-            '$numberOfTrips trips',
-            textAlign: TextAlign.end,
-            style: const TextStyle(color: AppTheme.secondaryText, fontSize: 11),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
+  }
+
+  IconData _modeIcon(String mode) {
+    switch (mode) {
+      case 'Ferry':
+        return Icons.directions_boat;
+      case 'KTM':
+      case 'MRT':
+      case 'LRT':
+      case 'Monorail':
+        return Icons.train;
+      default:
+        return Icons.directions_bus;
+    }
+  }
+
+  Color _modeColour(String mode) {
+    switch (mode) {
+      case 'Ferry':
+        return const Color(0xFF00897B);
+      case 'KTM':
+        return const Color(0xFF3949AB);
+      case 'MRT':
+        return const Color(0xFFD32F2F);
+      case 'LRT':
+        return const Color(0xFFF9A825);
+      case 'Monorail':
+        return const Color(0xFF7B1FA2);
+      default:
+        return AppTheme.primaryBlue;
+    }
+  }
+
+  String _formatDuration(int minutes) {
+    final hours = minutes ~/ 60;
+    final remainingMinutes = minutes % 60;
+
+    if (hours == 0) {
+      return '${remainingMinutes}m';
+    }
+
+    return '${hours}h ${remainingMinutes}m';
+  }
+
+  String _formatDate(DateTime date) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+
+    return '${date.day} '
+        '${months[date.month - 1]} '
+        '${date.year}';
+  }
+
+  String _formatTime(DateTime date) {
+    final period = date.hour >= 12 ? 'PM' : 'AM';
+
+    final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+
+    final minute = date.minute.toString().padLeft(2, '0');
+
+    return '$hour:$minute $period';
   }
 }
 
-class TravelRecord {
-  final String origin;
-  final String destination;
-  final String date;
-  final String time;
-  final String transport;
-  final String duration;
-  final double expense;
-  final IconData icon;
-  final Color colour;
+class _SpendingPoint {
+  const _SpendingPoint(this.label, this.amount);
 
-  const TravelRecord({
-    required this.origin,
-    required this.destination,
-    required this.date,
-    required this.time,
-    required this.transport,
-    required this.duration,
-    required this.expense,
-    required this.icon,
-    required this.colour,
-  });
-}
-
-class ExpenseData {
-  final String week;
+  final String label;
   final double amount;
-
-  const ExpenseData(this.week, this.amount);
 }

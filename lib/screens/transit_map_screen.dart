@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:location/location.dart';
 import 'package:permission_handler/permission_handler.dart' as handler;
 
+import '../data/local_storage_service.dart';
 import '../data/transit_repository.dart';
 import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
@@ -21,6 +22,7 @@ class TransitMapScreen extends StatefulWidget {
 
 class _TransitMapScreenState extends State<TransitMapScreen> {
   final TransitRepository _repository = TransitRepository.instance;
+  final LocalStorageService _storage = LocalStorageService.instance;
   final MapController _mapController = MapController();
   final TextEditingController _searchCtrl = TextEditingController();
   final Location _location = Location();
@@ -38,6 +40,8 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   bool _requestingLocation = false;
   bool _followUserLocation = true;
   bool _loadingMapArea = false;
+  bool _savingCompletedJourney = false;
+  bool _showJourneyInformation = true;
 
   String? _error;
   String _selectedMode = 'All';
@@ -90,6 +94,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       _selectedRoute = null;
       _selectedMode = 'All';
       _followUserLocation = false;
+      _showJourneyInformation = true;
     });
 
     if (_mapReady) {
@@ -376,6 +381,22 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     });
   }
 
+  List<LatLng> _journeyLegPoints(JourneyLeg leg) {
+    if (leg.shapePoints.isNotEmpty) {
+      return leg.shapePoints.map((point) {
+        return LatLng(
+          point.latitude,
+          point.longitude,
+        );
+      }).toList();
+    }
+    return leg.stops.map((stop) {
+      return LatLng(
+        stop.latitude,
+        stop.longitude,
+      );
+    }).toList();
+  }
   void _refreshVisibleMapContent(MapCamera camera) {
     final bounds = camera.visibleBounds;
     final zoom = camera.zoom;
@@ -398,9 +419,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
         final leg = journey.legs[index];
         polylines.add(
           Polyline(
-            points: leg.stops.map((stop) {
-              return LatLng(stop.latitude, stop.longitude);
-            }).toList(),
+            points: _journeyLegPoints(leg),
             color: _routeColour(leg.route.colourHex),
             strokeWidth: 6,
           ),
@@ -500,16 +519,29 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
   void _focusJourney(JourneyOption journey) {
     final points = <LatLng>[
-      LatLng(journey.origin.latitude, journey.origin.longitude),
+      LatLng(
+        journey.origin.latitude,
+        journey.origin.longitude,
+      ),
+
       for (final leg in journey.legs)
-        for (final stop in leg.stops) LatLng(stop.latitude, stop.longitude),
-      LatLng(journey.destination.latitude, journey.destination.longitude),
+        ..._journeyLegPoints(leg),
+
+      LatLng(
+        journey.destination.latitude,
+        journey.destination.longitude,
+      ),
     ];
 
     _mapController.fitCamera(
       CameraFit.bounds(
         bounds: LatLngBounds.fromPoints(points),
-        padding: const EdgeInsets.fromLTRB(40, 70, 40, 190),
+        padding: const EdgeInsets.fromLTRB(
+          40,
+          70,
+          40,
+          190,
+        ),
         maxZoom: 15,
       ),
     );
@@ -1042,21 +1074,13 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
             bottom: 12,
             child: _buildStopInformation(_selectedStop!),
           ),
-        if (_selectedStop == null && _selectedRoute != null)
-          Positioned(
-            left: 12,
-            right: 12,
-            bottom: 12,
-            child: _buildRouteInformation(_selectedRoute!),
-          ),
         if (_selectedStop == null &&
             _selectedRoute == null &&
             _activeJourney != null)
-          Positioned(
-            left: 12,
-            right: 12,
-            bottom: 12,
-            child: _buildJourneyInformation(_activeJourney!),
+          Positioned.fill(
+            child: _buildDraggableJourneyPanel(
+              _activeJourney!,
+            ),
           ),
       ],
     );
@@ -1355,6 +1379,162 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     );
   }
 
+  Future<void> _completeJourney() async {
+    final journey = _activeJourney;
+
+    if (journey == null || _savingCompletedJourney) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          icon: const Icon(
+            Icons.flag_circle,
+            color: Colors.green,
+            size: 44,
+          ),
+          title: const Text(
+            'Complete Journey?',
+            textAlign: TextAlign.center,
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${journey.origin.name} to ${journey.destination.name}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AppTheme.mainText,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Route: ${journey.routeSummary}',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${journey.totalDurationMinutes} min · '
+                'RM${journey.totalFare.toStringAsFixed(2)}',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'This journey will be added to your travel history and '
+                'analytics.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.secondaryText),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Continue Journey'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              icon: const Icon(Icons.check),
+              label: const Text('Complete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _savingCompletedJourney = true);
+
+    try {
+      await _storage.recordCompletedJourney(journey);
+
+      if (!mounted) return;
+
+      setState(() {
+        _activeJourney = null;
+        _selectedStop = null;
+        _selectedRoute = null;
+        _savingCompletedJourney = false;
+      });
+
+      if (_mapReady) {
+        _refreshVisibleMapContent(_mapController.camera);
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Journey saved to travel history.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() => _savingCompletedJourney = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Unable to save journey: $error'),
+        ),
+      );
+    }
+  }
+
+  // Draggable journey panel similar to YouTube comments
+  Widget _buildDraggableJourneyPanel(
+      JourneyOption journey,
+      ) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.62,
+      minChildSize: 0.07,
+      maxChildSize: 0.72,
+      expand: false,
+      snap: true,
+      snapSizes: const [
+        0.07,
+        0.55,
+        0.65,
+      ],
+      builder: (context, scrollCtrl) {
+        return Material(
+          color: Colors.white,
+          elevation: 10,
+          clipBehavior: Clip.antiAlias,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(20),
+          ),
+          child: ListView(
+            controller: scrollCtrl,
+            padding: const EdgeInsets.fromLTRB(
+              12,
+              8,
+              12,
+              16,
+            ),
+            children: [
+              // Draggable line
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade400,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 4),
+
+              _buildJourneyInformation(journey),
+            ],
+          ),
+        );
+      },
+    );
+  }
   // Build the journey information panel
   Widget _buildJourneyInformation(JourneyOption journey) {
     return _buildInformationCard(
@@ -1389,6 +1569,10 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
               avatar: const Icon(Icons.transfer_within_a_station, size: 18),
               label: Text('${journey.transferCount} transfer(s)'),
             ),
+            Chip(
+              avatar: const Icon(Icons.directions_walk, size: 18),
+              label: Text('${journey.walkingMetres} m'),
+            ),
           ],
         ),
         const SizedBox(height: 8),
@@ -1398,6 +1582,28 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
             onPressed: () => _focusJourney(journey),
             icon: const Icon(Icons.center_focus_strong),
             label: const Text('Show Entire Journey'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _savingCompletedJourney ? null : _completeJourney,
+            icon: _savingCompletedJourney
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.flag),
+            label: Text(
+              _savingCompletedJourney
+                  ? 'Saving Journey...'
+                  : 'Complete Journey',
+            ),
           ),
         ),
       ],
