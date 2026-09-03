@@ -34,6 +34,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   Timer? _mapCameraDebounce;
   LocationData? _currentLocation;
   double _mapZoom = 11;
+  static const double _markerZoomLevel = 15;
 
   bool _loading = true;
   bool _trackingLocation = false;
@@ -440,20 +441,30 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       );
     } else if (selectedRoute != null) {
       final routeStops =
-          _routeStopsById[selectedRoute.id] ?? const <TransitStop>[];
-      stops.addAll(_sampleStops(routeStops, 80));
-      polylines.add(_polylineForRoute(selectedRoute, selected: true));
+          _routeStopsById[selectedRoute.id] ??
+              const <TransitStop>[];
+      if (zoom >= _markerZoomLevel) {
+        stops.addAll(
+          _sampleStops(routeStops, 80),
+        );
+      }
+      polylines.add(
+        _polylineForRoute(
+          selectedRoute,
+          selected: true,
+        ),
+      );
     } else if (zoom >= 8.5) {
       final maximumRoutes = zoom < 10
           ? 35
           : zoom < 12
           ? 60
           : 90;
-      final maximumMarkers = zoom < 10
-          ? 60
-          : zoom < 12
-          ? 120
-          : 220;
+      final maximumMarkers = zoom < 15
+          ? 40
+          : zoom < 17
+          ? 80
+          : 140;
       final visibleRoutes = <TransitRoute>[];
 
       for (final route in _displayedRoutes) {
@@ -463,25 +474,53 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
           if (visibleRoutes.length >= maximumRoutes) break;
         }
       }
+      final visibleRouteIds = visibleRoutes
+          .map((route) => route.id)
+          .toSet();
 
-      final visibleRouteIds = visibleRoutes.map((route) => route.id).toSet();
-      for (final stop in _allStops) {
-        if (!bounds.contains(LatLng(stop.latitude, stop.longitude))) continue;
-        final stopRoutes = _routesByStopId[stop.id] ?? const <TransitRoute>[];
-        if (stopRoutes.any((route) => visibleRouteIds.contains(route.id))) {
-          stops.add(stop);
-          if (stops.length >= maximumMarkers) break;
+      if (zoom >= _markerZoomLevel) {
+        for (final stop in _allStops) {
+          if (!bounds.contains(
+            LatLng(
+              stop.latitude,
+              stop.longitude,
+            ),
+          )) {
+            continue;
+          }
+          final stopRoutes =
+              _routesByStopId[stop.id] ??
+                  const <TransitRoute>[];
+
+          if (stopRoutes.any(
+                (route) {
+              return visibleRouteIds.contains(
+                route.id,
+              );
+            },
+          )) {
+            stops.add(stop);
+
+            if (stops.length >= maximumMarkers) {
+              break;
+            }
+          }
         }
       }
 
       for (final route in visibleRoutes) {
-        polylines.add(_polylineForRoute(route));
+        polylines.add(
+          _polylineForRoute(route),
+        );
       }
     }
 
     final selectedStop = _selectedStop;
-    if (selectedStop != null &&
-        !stops.any((stop) => stop.id == selectedStop.id)) {
+    if (zoom >= _markerZoomLevel &&
+        selectedStop != null &&
+        !stops.any(
+              (stop) => stop.id == selectedStop.id,
+        )) {
       stops.add(selectedStop);
     }
 
@@ -977,10 +1016,22 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
               panBuffer: 0,
             ),
             PolylineLayer(polylines: _renderedPolylines),
-            MarkerLayer(markers: _renderedStops.map(_buildStopMarker).toList()),
-            MarkerLayer(markers: _buildJourneyStationMarkers()),
-            MarkerLayer(markers: _buildJourneyEndpointMarkers()),
-            MarkerLayer(markers: _buildCurrentLocationMarkers()),
+            if (_mapZoom >= _markerZoomLevel)
+              MarkerLayer(
+                markers: _renderedStops
+                    .map(_buildStopMarker)
+                    .toList(),
+              ),
+            if (_mapZoom >= _markerZoomLevel)
+              MarkerLayer(
+                markers: _buildJourneyStationMarkers(),
+              ),
+            MarkerLayer(
+              markers: _buildJourneyEndpointMarkers(),
+            ),
+            MarkerLayer(
+              markers: _buildCurrentLocationMarkers(),
+            ),
             const Align(
               alignment: Alignment.topRight,
               child: Padding(
@@ -1340,7 +1391,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
                   : journey != null
                   ? 'Journey ${journey.routeSummary}'
                   : route == null
-                  ? _mapZoom < 8.5
+                  ? _mapZoom < _markerZoomLevel
                   ? 'Zoom in to view stops'
                   : '${_renderedStops.length} nearby stops'
                   : 'Route ${route.number}',
