@@ -1,41 +1,58 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../data/local_storage_service.dart';
 import '../theme/app_theme.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
 
   @override
-  State<RegisterScreen> createState() => _RegisterScreenState();
+  State<RegisterScreen> createState() {
+    return _RegisterScreenState();
+  }
 }
 
-class _RegisterScreenState extends State<RegisterScreen> {
-  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+class _RegisterScreenState
+    extends State<RegisterScreen> {
+  final _formKey = GlobalKey<FormState>();
 
-  final TextEditingController _nameController = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  final _confirmPasswordCtrl =
+  TextEditingController();
 
-  final TextEditingController _emailController = TextEditingController();
-
-  final TextEditingController _phoneController = TextEditingController();
-
-  final TextEditingController _passwordController = TextEditingController();
-
-  final TextEditingController _confirmPasswordController =
-      TextEditingController();
+  final LocalStorageService _storage =
+      LocalStorageService.instance;
 
   bool _hidePassword = true;
   bool _hideConfirmPassword = true;
   bool _acceptedTerms = false;
   bool _showTermsError = false;
+  bool _registering = false;
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _emailController.dispose();
-    _phoneController.dispose();
-    _passwordController.dispose();
-    _confirmPasswordController.dispose();
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    _phoneCtrl.dispose();
+    _passwordCtrl.dispose();
+    _confirmPasswordCtrl.dispose();
     super.dispose();
+  }
+
+  String? _validateName(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'Please enter your full name.';
+    }
+
+    if (value.trim().length < 2) {
+      return 'Name must contain at least 2 characters.';
+    }
+
+    return null;
   }
 
   String? _validateEmail(String? value) {
@@ -43,7 +60,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return 'Please enter your email address.';
     }
 
-    final emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+    final emailPattern = RegExp(
+      r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(com|my|com\.my|edu\.my|gov\.my)$',
+    );
 
     if (!emailPattern.hasMatch(value.trim())) {
       return 'Please enter a valid email address.';
@@ -57,17 +76,59 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return 'Please enter your phone number.';
     }
 
-    final phone = value.replaceAll(RegExp(r'[\s-]'), '');
+    final phone = value.replaceAll(
+      RegExp(r'[\s-]'),
+      '',
+    );
 
-    if (phone.length < 9) {
-      return 'Please enter a valid phone number.';
+    final phonePattern = RegExp(
+      r'^(?:\+?60|0)(?:11[0-9]{8}|1[0-9]{7,8})$',
+    );
+
+    if (!phonePattern.hasMatch(phone)) {
+      return 'Please enter a valid Malaysian phone number.';
+    }
+
+    return null;
+  }
+
+  String? _validatePassword(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Please enter a password.';
+    }
+
+    if (value.length < 8) {
+      return 'Password must contain at least 8 characters.';
+    }
+
+    if (!RegExp(r'[A-Za-z]').hasMatch(value)) {
+      return 'Password must contain at least one letter.';
+    }
+
+    if (!RegExp(r'[0-9]').hasMatch(value)) {
+      return 'Password must contain at least one number.';
+    }
+
+    return null;
+  }
+
+  String? _validateConfirmPassword(
+      String? value,
+      ) {
+    if (value == null || value.isEmpty) {
+      return 'Please confirm your password.';
+    }
+
+    if (value != _passwordCtrl.text) {
+      return 'Passwords do not match.';
     }
 
     return null;
   }
 
   Future<void> _register() async {
-    final formIsValid = _formKey.currentState!.validate();
+    final formIsValid =
+    _formKey.currentState!.validate();
 
     setState(() {
       _showTermsError = !_acceptedTerms;
@@ -77,47 +138,117 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    final returnToLogin = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return AlertDialog(
-          icon: const Icon(
-            Icons.check_circle,
-            color: AppTheme.primaryBlue,
-            size: 48,
-          ),
-          title: const Text('Account Created'),
-          content: const Text(
-            'Your account has been created successfully. '
-            'You can now return to the login screen.',
-            textAlign: TextAlign.center,
-          ),
-          actions: [
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(dialogContext, true);
-              },
-              child: const Text('Return to Login'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (!mounted) return;
-
-    if (returnToLogin == true) {
-      Navigator.pop(context);
+    if (_registering) {
+      return;
     }
-  }
 
-  void _selectProfilePicture() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Profile-image selection will be added later.'),
-      ),
-    );
+    setState(() {
+      _registering = true;
+    });
+
+    try {
+      final email = _emailCtrl.text
+          .trim()
+          .toLowerCase();
+
+      final alreadyRegistered =
+      await _storage.emailExists(email);
+
+      if (!mounted) {
+        return;
+      }
+
+      if (alreadyRegistered) {
+        setState(() {
+          _registering = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'An account already exists with this email.',
+            ),
+          ),
+        );
+
+        return;
+      }
+
+      await _storage.registerUser(
+        fullName: _nameCtrl.text,
+        email: email,
+        phone: _phoneCtrl.text,
+        password: _passwordCtrl.text,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _registering = false;
+      });
+
+      final returnToLogin =
+      await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AlertDialog(
+            icon: const Icon(
+              Icons.check_circle,
+              color: AppTheme.primaryBlue,
+              size: 48,
+            ),
+            title: const Text(
+              'Account Created',
+            ),
+            content: const Text(
+              'Your account has been created successfully. '
+                  'You can now log in using your email and password.',
+              textAlign: TextAlign.center,
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(
+                    dialogContext,
+                    true,
+                  );
+                },
+                child: const Text(
+                  'Return to Login',
+                ),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      if (returnToLogin == true) {
+        Navigator.pop(context, email);
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _registering = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Unable to create account: $error',
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -126,251 +257,206 @@ class _RegisterScreenState extends State<RegisterScreen> {
       appBar: AppBar(
         title: const Text(
           'Create Account',
-          style: TextStyle(fontWeight: FontWeight.bold),
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          padding: const EdgeInsets.fromLTRB(
+            20,
+            16,
+            20,
+            32,
+          ),
           child: Form(
             key: _formKey,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
               children: [
-                // Profile image
-                Center(
-                  child: Column(
-                    children: [
-                      Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          InkWell(
-                            onTap: _selectProfilePicture,
-                            borderRadius: BorderRadius.circular(50),
-                            child: Container(
-                              width: 96,
-                              height: 96,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: const Color(0xFFE3F2FD),
-                                border: Border.all(
-                                  color: AppTheme.primaryBlue,
-                                  width: 2,
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.person_outline,
-                                size: 48,
-                                color: AppTheme.primaryBlue,
-                              ),
-                            ),
-                          ),
-                          Positioned(
-                            right: -2,
-                            bottom: -2,
-                            child: Material(
-                              color: AppTheme.primaryBlue,
-                              shape: const CircleBorder(),
-                              child: IconButton(
-                                onPressed: _selectProfilePicture,
-                                tooltip: 'Add profile picture',
-                                icon: const Icon(
-                                  Icons.add_a_photo_outlined,
-                                  color: Colors.white,
-                                  size: 20,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Add Profile Picture',
-                        style: TextStyle(
-                          color: AppTheme.secondaryText,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
+                const Text(
+                  'Register',
+                  style: TextStyle(
+                    color: AppTheme.mainText,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
 
-                const SizedBox(height: 32),
+                const SizedBox(height: 6),
 
-                // Full name
                 const Text(
-                  'Full Name',
-                  style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
+                  'Create an account to save your transport preferences and journeys.',
+                  style: TextStyle(
+                    color: AppTheme.secondaryText,
+                  ),
                 ),
-                const SizedBox(height: 8),
+
+                const SizedBox(height: 28),
+
                 TextFormField(
-                  controller: _nameController,
-                  textCapitalization: TextCapitalization.words,
-                  textInputAction: TextInputAction.next,
-                  autofillHints: const [AutofillHints.name],
+                  controller: _nameCtrl,
+                  enabled: !_registering,
+                  textCapitalization:
+                  TextCapitalization.words,
+                  textInputAction:
+                  TextInputAction.next,
+                  autofillHints: const [
+                    AutofillHints.name,
+                  ],
                   decoration: const InputDecoration(
+                    labelText: 'Full Name',
                     hintText: 'Enter your full name',
-                    prefixIcon: Icon(Icons.person_outline),
+                    prefixIcon:
+                    Icon(Icons.person_outline),
                   ),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Please enter your full name.';
-                    }
-
-                    if (value.trim().length < 2) {
-                      return 'Name must contain at least 2 characters.';
-                    }
-
-                    return null;
-                  },
+                  validator: _validateName,
                 ),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 18),
 
-                // Email
-                const Text(
-                  'Email Address',
-                  style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
-                ),
-                const SizedBox(height: 8),
                 TextFormField(
-                  controller: _emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  textInputAction: TextInputAction.next,
-                  autofillHints: const [AutofillHints.email],
+                  controller: _emailCtrl,
+                  enabled: !_registering,
+                  keyboardType:
+                  TextInputType.emailAddress,
+                  textInputAction:
+                  TextInputAction.next,
+                  autofillHints: const [
+                    AutofillHints.email,
+                  ],
                   decoration: const InputDecoration(
+                    labelText: 'Email Address',
                     hintText: 'name@example.com',
-                    prefixIcon: Icon(Icons.email_outlined),
+                    prefixIcon:
+                    Icon(Icons.email_outlined),
                   ),
                   validator: _validateEmail,
                 ),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 18),
 
-                // Phone number
-                const Text(
-                  'Phone Number',
-                  style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
-                ),
-                const SizedBox(height: 8),
                 TextFormField(
-                  controller: _phoneController,
+                  controller: _phoneCtrl,
+                  enabled: !_registering,
                   keyboardType: TextInputType.phone,
-                  textInputAction: TextInputAction.next,
-                  autofillHints: const [AutofillHints.telephoneNumber],
+                  textInputAction:
+                  TextInputAction.next,
+                  autofillHints: const [
+                    AutofillHints.telephoneNumber,
+                  ],
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(
+                      RegExp(r'[0-9+\-\s]'),
+                    ),
+                  ],
                   decoration: const InputDecoration(
+                    labelText: 'Phone Number',
                     hintText: '+60 12-345 6789',
-                    prefixIcon: Icon(Icons.phone_outlined),
+                    prefixIcon:
+                    Icon(Icons.phone_outlined),
                   ),
                   validator: _validatePhone,
                 ),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 18),
 
-                // Password
-                const Text(
-                  'Password',
-                  style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
-                ),
-                const SizedBox(height: 8),
                 TextFormField(
-                  controller: _passwordController,
+                  controller: _passwordCtrl,
+                  enabled: !_registering,
                   obscureText: _hidePassword,
-                  textInputAction: TextInputAction.next,
-                  autofillHints: const [AutofillHints.newPassword],
+                  textInputAction:
+                  TextInputAction.next,
+                  autofillHints: const [
+                    AutofillHints.newPassword,
+                  ],
                   decoration: InputDecoration(
-                    hintText: 'Create a strong password',
-                    prefixIcon: const Icon(Icons.lock_outline),
+                    labelText: 'Password',
+                    hintText:
+                    'At least 8 characters',
+                    prefixIcon:
+                    const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
                       tooltip: _hidePassword
                           ? 'Show password'
                           : 'Hide password',
                       onPressed: () {
                         setState(() {
-                          _hidePassword = !_hidePassword;
+                          _hidePassword =
+                          !_hidePassword;
                         });
                       },
                       icon: Icon(
                         _hidePassword
                             ? Icons.visibility_outlined
-                            : Icons.visibility_off_outlined,
+                            : Icons
+                            .visibility_off_outlined,
                       ),
                     ),
                   ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Please enter a password.';
-                    }
-
-                    if (value.length < 8) {
-                      return 'Password must contain at least 8 characters.';
-                    }
-
-                    return null;
-                  },
+                  validator: _validatePassword,
                 ),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 18),
 
-                // Confirm password
-                const Text(
-                  'Confirm Password',
-                  style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
-                ),
-                const SizedBox(height: 8),
                 TextFormField(
-                  controller: _confirmPasswordController,
-                  obscureText: _hideConfirmPassword,
-                  textInputAction: TextInputAction.done,
-                  onFieldSubmitted: (_) => _register(),
+                  controller: _confirmPasswordCtrl,
+                  enabled: !_registering,
+                  obscureText:
+                  _hideConfirmPassword,
+                  textInputAction:
+                  TextInputAction.done,
+                  onFieldSubmitted: (_) {
+                    _register();
+                  },
                   decoration: InputDecoration(
-                    hintText: 'Repeat your password',
-                    prefixIcon: const Icon(Icons.lock_outline),
+                    labelText: 'Confirm Password',
+                    hintText:
+                    'Enter your password again',
+                    prefixIcon:
+                    const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
                       tooltip: _hideConfirmPassword
                           ? 'Show password'
                           : 'Hide password',
                       onPressed: () {
                         setState(() {
-                          _hideConfirmPassword = !_hideConfirmPassword;
+                          _hideConfirmPassword =
+                          !_hideConfirmPassword;
                         });
                       },
                       icon: Icon(
                         _hideConfirmPassword
                             ? Icons.visibility_outlined
-                            : Icons.visibility_off_outlined,
+                            : Icons
+                            .visibility_off_outlined,
                       ),
                     ),
                   ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Please confirm your password.';
-                    }
-
-                    if (value != _passwordController.text) {
-                      return 'Passwords do not match.';
-                    }
-
-                    return null;
-                  },
+                  validator:
+                  _validateConfirmPassword,
                 ),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
 
-                // Terms and conditions
                 CheckboxListTile(
                   value: _acceptedTerms,
                   contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
+                  controlAffinity:
+                  ListTileControlAffinity.leading,
                   title: const Text(
                     'I agree to the Terms of Service '
-                    'and Privacy Policy.',
+                        'and Privacy Policy.',
                     style: TextStyle(fontSize: 14),
                   ),
-                  onChanged: (value) {
+                  onChanged: _registering
+                      ? null
+                      : (value) {
                     setState(() {
-                      _acceptedTerms = value ?? false;
+                      _acceptedTerms =
+                          value ?? false;
                       _showTermsError = false;
                     });
                   },
@@ -378,11 +464,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                 if (_showTermsError)
                   const Padding(
-                    padding: EdgeInsets.only(left: 12, bottom: 8),
+                    padding: EdgeInsets.only(
+                      left: 12,
+                      bottom: 8,
+                    ),
                     child: Text(
                       'Please accept the Terms of Service '
-                      'and Privacy Policy.',
-                      style: TextStyle(color: Colors.red, fontSize: 12),
+                          'and Privacy Policy.',
+                      style: TextStyle(
+                        color: Colors.red,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
 
@@ -390,32 +482,56 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                 SizedBox(
                   width: double.infinity,
-                  height: 48,
+                  height: 50,
                   child: FilledButton(
-                    onPressed: _register,
-                    child: const Text(
+                    onPressed: _registering
+                        ? null
+                        : _register,
+                    child: _registering
+                        ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child:
+                      CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                        : const Text(
                       'Create Account',
-                      style: TextStyle(fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontWeight:
+                        FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 18),
 
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisAlignment:
+                  MainAxisAlignment.center,
                   children: [
                     const Text(
                       'Already have an account?',
-                      style: TextStyle(color: AppTheme.secondaryText),
+                      style: TextStyle(
+                        color:
+                        AppTheme.secondaryText,
+                      ),
                     ),
                     TextButton(
-                      onPressed: () {
+                      onPressed: _registering
+                          ? null
+                          : () {
                         Navigator.pop(context);
                       },
                       child: const Text(
                         'Log In',
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontWeight:
+                          FontWeight.bold,
+                        ),
                       ),
                     ),
                   ],

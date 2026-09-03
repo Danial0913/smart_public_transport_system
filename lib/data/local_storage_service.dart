@@ -2,9 +2,11 @@ import 'dart:convert';
 
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
+import 'package:crypto/crypto.dart';
 
 import '../models/transit_models.dart';
 import '../models/travel_history_models.dart';
+import '../models/user_models.dart';
 
 class LocalStorageService {
   LocalStorageService._();
@@ -23,7 +25,7 @@ class LocalStorageService {
 
     _database = await openDatabase(
       databasePath,
-      version: 7,
+      version: 8,
       onConfigure: (database) async {
         await database.execute('PRAGMA foreign_keys = ON');
       },
@@ -101,7 +103,7 @@ class LocalStorageService {
         ''');
         await database.execute(
           'CREATE UNIQUE INDEX favourites_reference_unique '
-          'ON favourites(type, reference_id)',
+              'ON favourites(type, reference_id)',
         );
         final now = DateTime.now();
         await database.insert('favourite_categories', {
@@ -152,6 +154,16 @@ class LocalStorageService {
           CREATE TABLE monthly_travel_budgets(
           month_key TEXT PRIMARY KEY,
           amount REAL NOT NULL
+        )
+      ''');
+        await database.execute('''
+          CREATE TABLE users(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          full_name TEXT NOT NULL,
+          email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+          phone TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL
         )
       ''');
       },
@@ -229,7 +241,7 @@ class LocalStorageService {
           ''');
           await database.execute(
             'CREATE UNIQUE INDEX IF NOT EXISTS favourites_reference_unique '
-            'ON favourites(type, reference_id)',
+                'ON favourites(type, reference_id)',
           );
         }
         if (oldVersion < 7) {
@@ -237,6 +249,18 @@ class LocalStorageService {
           // rows are obsolete and only consume device storage.
           await database.execute('DROP TABLE IF EXISTS gtfs_cache_chunks');
           await database.execute('DROP TABLE IF EXISTS gtfs_cache');
+        }
+        if (oldVersion < 8) {
+          await database.execute('''
+          CREATE TABLE IF NOT EXISTS users(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          full_name TEXT NOT NULL,
+          email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+          phone TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      ''');
         }
       },
     );
@@ -248,13 +272,13 @@ class LocalStorageService {
   }
 
   Future<void> saveJourney(
-    JourneyOption option, {
-    String preference = 'Recommended',
-    bool departAt = true,
-    int maximumWalkingMetres = 2000,
-    bool accessibleOnly = false,
-    bool fewerTransfers = false,
-  }) async {
+      JourneyOption option, {
+        String preference = 'Recommended',
+        bool departAt = true,
+        int maximumWalkingMetres = 2000,
+        bool accessibleOnly = false,
+        bool fewerTransfers = false,
+      }) async {
     await updateSavedJourney(
       SavedJourney.fromOption(
         option,
@@ -784,5 +808,77 @@ class LocalStorageService {
         whereArgs: [journeyId],
       );
     });
+  }
+
+  String _hashPassword(String password) {
+    final passwordBytes = utf8.encode(password);
+    return sha256.convert(passwordBytes).toString();
+  }
+
+  Future<bool> emailExists(String email) async {
+    final database = await _db;
+    final normalisedEmail = email.trim().toLowerCase();
+
+    final rows = await database.query(
+      'users',
+      columns: ['id'],
+      where: 'email = ?',
+      whereArgs: [normalisedEmail],
+      limit: 1,
+    );
+
+    return rows.isNotEmpty;
+  }
+
+  Future<void> registerUser({
+    required String fullName,
+    required String email,
+    required String phone,
+    required String password,
+  }) async {
+    final database = await _db;
+
+    await database.insert(
+      'users',
+      {
+        'full_name': fullName.trim(),
+        'email': email.trim().toLowerCase(),
+        'phone': phone.trim(),
+        'password_hash': _hashPassword(password),
+        'created_at': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.abort,
+    );
+  }
+
+  Future<AppUser?> loginUser({
+    required String email,
+    required String password,
+  }) async {
+    final database = await _db;
+    final normalisedEmail = email.trim().toLowerCase();
+
+    final rows = await database.query(
+      'users',
+      where: 'email = ?',
+      whereArgs: [normalisedEmail],
+      limit: 1,
+    );
+
+    if (rows.isEmpty) {
+      return null;
+    }
+
+    final userRow = rows.first;
+    final savedPasswordHash =
+    userRow['password_hash'] as String;
+    final enteredPasswordHash =
+    _hashPassword(password);
+
+    if (savedPasswordHash != enteredPasswordHash) {
+      return null;
+    }
+
+    return AppUser.fromMap(userRow);
   }
 }
