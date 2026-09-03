@@ -363,7 +363,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
         );
         if (added) await _refreshTransitCaches();
       } catch (_) {
-        // Keep showing cached map data when the network is unavailable.
       } finally {
         _loadingMapArea = false;
       }
@@ -1529,7 +1528,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     }
   }
 
-  // Draggable journey panel similar to YouTube comments
   Widget _buildDraggableJourneyPanel(
       JourneyOption journey,
       ) {
@@ -1561,7 +1559,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
               16,
             ),
             children: [
-              // Draggable line
               Center(
                 child: Container(
                   width: 44,
@@ -1582,7 +1579,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       },
     );
   }
-  // Build the journey information panel
   Widget _buildJourneyInformation(JourneyOption journey) {
     return _buildInformationCard(
       icon: Icons.navigation,
@@ -1657,7 +1653,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     );
   }
 
-  // Build the walking and transport sequence
   Widget _buildJourneySequence(JourneyOption journey) {
     final steps = <Widget>[];
 
@@ -1727,7 +1722,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     );
   }
 
-  // Build one journey step
   Widget _buildJourneyStepChip({
     required IconData icon,
     required String label,
@@ -1745,7 +1739,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     );
   }
 
-  // Build the selected stop information panel
   Widget _buildStopInformation(TransitStop stop) {
     final routes = _routesForStop(stop);
     final modes = routes.map((route) => route.mode).toSet();
@@ -1835,7 +1828,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     );
   }
 
-  // selected route information panel
   Widget _buildRouteInformation(TransitRoute route) {
     final stops = _repository.stopsForRoute(route);
     final firstStop = stops.isEmpty ? 'Unknown' : stops.first.name;
@@ -1893,7 +1885,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     );
   }
 
-  // Build a reusable information card
   Widget _buildInformationCard({
     required IconData icon,
     required Color colour,
