@@ -275,7 +275,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       if (!mounted) return;
       final gpsLocation = JourneyLocation(
         name:
-            placeName ??
+        placeName ??
             (nearestStop == null
                 ? 'Current location'
                 : 'Near ${nearestStop.name}'),
@@ -443,7 +443,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
                               const SizedBox(height: 4),
                               Text(
                                 '${_originController.text} to '
-                                '${_destinationController.text}',
+                                    '${_destinationController.text}',
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -525,9 +525,9 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   }
 
   Future<void> _startJourney(
-    BuildContext bottomSheetContext,
-    JourneyOption option,
-  ) async {
+      BuildContext bottomSheetContext,
+      JourneyOption option,
+      ) async {
     for (final leg in option.legs) {
       await _storage.recordServiceUse(leg.route);
     }
@@ -560,7 +560,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
             selected.originLocation ?? _locationFromStopName(selected.origin);
         _destinationLocation =
             selected.destinationLocation ??
-            _locationFromStopName(selected.destination);
+                _locationFromStopName(selected.destination);
         _selectedDate = DateUtils.dateOnly(selectedDeparture);
         _selectedTime = TimeOfDay.fromDateTime(selectedDeparture);
         _routePreference = selected.preference;
@@ -668,13 +668,13 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
             onPressed: _searching ? null : _findRoutes,
             icon: _searching
                 ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
                 : const Icon(Icons.search),
             label: Text(_searching ? 'Finding Routes...' : 'Find Routes'),
           ),
@@ -747,10 +747,10 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
                   tooltip: 'Use current GPS location',
                   icon: _gettingLocation
                       ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                       : const Icon(Icons.my_location),
                 ),
                 IconButton(
@@ -836,14 +836,14 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
                 onPressed: () {
                   final originLocation =
                       search.originLocation ??
-                      _locationFromStopName(search.origin);
+                          _locationFromStopName(search.origin);
                   final destinationLocation =
                       search.destinationLocation ??
-                      _locationFromStopName(search.destination);
+                          _locationFromStopName(search.destination);
                   final now = DateTime.now();
                   final requested =
-                      search.requestedTime != null &&
-                          search.requestedTime!.isAfter(now)
+                  search.requestedTime != null &&
+                      search.requestedTime!.isAfter(now)
                       ? search.requestedTime!
                       : now.add(const Duration(minutes: 5));
                   setState(() {
@@ -1100,10 +1100,10 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   }
 
   Widget _buildRouteOptionCard(
-    JourneyOption option, {
-    required bool recommended,
-    VoidCallback? onSavedChanged,
-  }) {
+      JourneyOption option, {
+        required bool recommended,
+        VoidCallback? onSavedChanged,
+      }) {
     final isSaved = _savedJourneyIds.contains(option.id);
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1156,7 +1156,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
           const SizedBox(height: 4),
           Text(
             'Depart ${_formatTime(option.departureTime)}  |  '
-            'Arrive ${_formatTime(option.arrivalTime)}',
+                'Arrive ${_formatTime(option.arrivalTime)}',
             style: const TextStyle(color: AppTheme.secondaryText),
           ),
           if (!option.usesOfficialSchedule) ...[
@@ -1291,8 +1291,8 @@ class _JourneyDetailsSheetState extends State<_JourneyDetailsSheet> {
             const SizedBox(height: 4),
             Text(
               '${_formatTime(option.departureTime)} - '
-              '${_formatTime(option.arrivalTime)}  |  '
-              '${option.totalDurationMinutes} min  |  ${_fareText(option)}',
+                  '${_formatTime(option.arrivalTime)}  |  '
+                  '${option.totalDurationMinutes} min  |  ${_fareText(option)}',
               style: const TextStyle(color: AppTheme.secondaryText),
             ),
             const SizedBox(height: 4),
@@ -1760,84 +1760,84 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
                   : _journeys.isEmpty
                   ? const _EmptySavedJourneyState()
                   : ListView.separated(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: _journeys.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 12),
-                      itemBuilder: (context, index) {
-                        final journey = _journeys[index];
-                        return Card(
-                          margin: EdgeInsets.zero,
-                          child: Padding(
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        '${journey.origin} -> ${journey.destination}',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                    PopupMenuButton<String>(
-                                      onSelected: (value) {
-                                        if (value == 'edit') {
-                                          _editJourney(journey);
-                                        } else if (value == 'duplicate') {
-                                          _duplicateJourney(journey);
-                                        } else if (value == 'delete') {
-                                          _deleteJourney(journey);
-                                        }
-                                      },
-                                      itemBuilder: (_) => const [
-                                        PopupMenuItem(
-                                          value: 'edit',
-                                          child: Text('Edit'),
-                                        ),
-                                        PopupMenuItem(
-                                          value: 'duplicate',
-                                          child: Text('Duplicate'),
-                                        ),
-                                        PopupMenuItem(
-                                          value: 'delete',
-                                          child: Text('Delete'),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                                Text(
-                                  '${journey.routeSummary}  |  '
-                                  '${journey.durationMinutes} min  |  '
-                                  '${journey.knownFare == null ? 'Fare unavailable' : 'RM ${journey.knownFare!.toStringAsFixed(2)}'}',
+                padding: const EdgeInsets.all(16),
+                itemCount: _journeys.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 12),
+                itemBuilder: (context, index) {
+                  final journey = _journeys[index];
+                  return Card(
+                    margin: EdgeInsets.zero,
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '${journey.origin} -> ${journey.destination}',
                                   style: const TextStyle(
-                                    color: AppTheme.secondaryText,
+                                    fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  '${_formatDate(journey.departureTime)} at '
-                                  '${_formatTime(journey.departureTime)}',
-                                ),
-                                const SizedBox(height: 10),
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: TextButton.icon(
-                                    onPressed: () =>
-                                        Navigator.pop(context, journey),
-                                    icon: const Icon(Icons.route),
-                                    label: const Text('Use This Plan'),
+                              ),
+                              PopupMenuButton<String>(
+                                onSelected: (value) {
+                                  if (value == 'edit') {
+                                    _editJourney(journey);
+                                  } else if (value == 'duplicate') {
+                                    _duplicateJourney(journey);
+                                  } else if (value == 'delete') {
+                                    _deleteJourney(journey);
+                                  }
+                                },
+                                itemBuilder: (_) => const [
+                                  PopupMenuItem(
+                                    value: 'edit',
+                                    child: Text('Edit'),
                                   ),
-                                ),
-                              ],
+                                  PopupMenuItem(
+                                    value: 'duplicate',
+                                    child: Text('Duplicate'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text('Delete'),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          Text(
+                            '${journey.routeSummary}  |  '
+                                '${journey.durationMinutes} min  |  '
+                                '${journey.knownFare == null ? 'Fare unavailable' : 'RM ${journey.knownFare!.toStringAsFixed(2)}'}',
+                            style: const TextStyle(
+                              color: AppTheme.secondaryText,
                             ),
                           ),
-                        );
-                      },
+                          const SizedBox(height: 6),
+                          Text(
+                            '${_formatDate(journey.departureTime)} at '
+                                '${_formatTime(journey.departureTime)}',
+                          ),
+                          const SizedBox(height: 10),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              onPressed: () =>
+                                  Navigator.pop(context, journey),
+                              icon: const Icon(Icons.route),
+                              label: const Text('Use This Plan'),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
+                  );
+                },
+              ),
             ),
           ],
         ),
@@ -1953,14 +1953,14 @@ class JourneyRouteMap extends StatelessWidget {
                 Polyline(
                   points: leg.shapePoints.isNotEmpty
                       ? leg.shapePoints
-                            .map(
-                              (point) =>
-                                  LatLng(point.latitude, point.longitude),
-                            )
-                            .toList()
+                      .map(
+                        (point) =>
+                        LatLng(point.latitude, point.longitude),
+                  )
+                      .toList()
                       : leg.stops.map((stop) {
-                          return LatLng(stop.latitude, stop.longitude);
-                        }).toList(),
+                    return LatLng(stop.latitude, stop.longitude);
+                  }).toList(),
                   color: _routeColour(leg.route),
                   strokeWidth: 5,
                 ),
@@ -2113,14 +2113,14 @@ Color _routeColour(TransitRoute route) {
 String _savedReminderMessage(JourneyReminderResult result) {
   return switch (result) {
     JourneyReminderResult.scheduledExact =>
-      'Journey plan saved. A reminder will appear at departure time.',
+    'Journey plan saved. A reminder will appear at departure time.',
     JourneyReminderResult.scheduledInexact =>
-      'Journey plan saved. Enable exact alarms for an exact-time reminder.',
+    'Journey plan saved. Enable exact alarms for an exact-time reminder.',
     JourneyReminderResult.shownNow =>
-      'Journey plan saved. The journey starts now.',
+    'Journey plan saved. The journey starts now.',
     JourneyReminderResult.permissionDenied =>
-      'Journey plan saved, but notification permission was not granted.',
+    'Journey plan saved, but notification permission was not granted.',
     JourneyReminderResult.failed =>
-      'Journey plan saved, but its departure reminder could not be scheduled.',
+    'Journey plan saved, but its departure reminder could not be scheduled.',
   };
 }

@@ -100,8 +100,8 @@ class ScheduledTransitTrip {
       frequencyWindows: (json['frequencyWindows'] as List<dynamic>? ?? const [])
           .map(
             (item) =>
-                TransitFrequencyWindow.fromJson(item as Map<String, dynamic>),
-          )
+            TransitFrequencyWindow.fromJson(item as Map<String, dynamic>),
+      )
           .toList(),
     );
   }
@@ -237,16 +237,16 @@ class TransitRoute {
       scheduledTrips: (json['scheduledTrips'] as List<dynamic>? ?? const [])
           .map(
             (item) =>
-                ScheduledTransitTrip.fromJson(item as Map<String, dynamic>),
-          )
+            ScheduledTransitTrip.fromJson(item as Map<String, dynamic>),
+      )
           .toList(),
       shapes: (json['shapes'] as Map<String, dynamic>? ?? const {}).map(
-        (key, value) => MapEntry(
+            (key, value) => MapEntry(
           key,
           (value as List<dynamic>)
               .map(
                 (item) => TransitPoint.fromJson(item as Map<String, dynamic>),
-              )
+          )
               .toList(),
         ),
       ),
@@ -340,7 +340,7 @@ class JourneyOption {
           : ' at ${_clockTime(leg.departureTime!)}';
       result.add(
         'Board ${leg.route.mode} ${leg.route.number}$headsignText at '
-        '${leg.from.name}$timeText, then leave at ${leg.to.name}.',
+            '${leg.from.name}$timeText, then leave at ${leg.to.name}.',
       );
       if (leg != legs.last) {
         result.add('Transfer at ${leg.to.name} to the next service.');
@@ -349,7 +349,7 @@ class JourneyOption {
 
     result.add(
       'Walk $destinationWalkingMetres m from ${legs.last.to.name} to '
-      '${destination.name}.',
+          '${destination.name}.',
     );
     return result;
   }
@@ -473,15 +473,15 @@ class SavedJourney {
   }
 
   factory SavedJourney.fromOption(
-    JourneyOption option, {
-    String? id,
-    DateTime? savedAt,
-    String preference = 'Recommended',
-    bool departAt = true,
-    int maximumWalkingMetres = 2000,
-    bool accessibleOnly = false,
-    bool fewerTransfers = false,
-  }) {
+      JourneyOption option, {
+        String? id,
+        DateTime? savedAt,
+        String preference = 'Recommended',
+        bool departAt = true,
+        int maximumWalkingMetres = 2000,
+        bool accessibleOnly = false,
+        bool fewerTransfers = false,
+      }) {
     return SavedJourney(
       id: id ?? option.id,
       origin: option.origin.name,
