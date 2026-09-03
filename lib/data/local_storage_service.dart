@@ -523,9 +523,9 @@ class LocalStorageService {
         id: row['id'] as String,
         title: row['title'] as String,
         subtitle: row['subtitle'] as String,
-        type: row['type'] as String,
         referenceId: row['reference_id'] as String,
         categoryId: row['category_id'] as String,
+        type: row['type'] as String,
         createdAt: DateTime.parse(row['created_at'] as String),
       );
     }).toList();
