@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import 'accessibility_screen.dart';
 import 'login_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -82,7 +83,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     width: 76,
                     height: 76,
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.20),
+                      color: Colors.white.withValues(alpha: 0.20),
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 3),
                     ),
@@ -223,7 +224,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       : AppTheme.secondaryText,
                 ),
                 label: Text(transport.name),
-                selectedColor: AppTheme.primaryBlue.withOpacity(0.13),
+                selectedColor: AppTheme.primaryBlue.withValues(alpha: 0.13),
                 checkmarkColor: AppTheme.primaryBlue,
                 side: BorderSide(
                   color: isSelected ? AppTheme.primaryBlue : AppTheme.border,
@@ -314,10 +315,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
-          children: [
+        children: [
           SwitchListTile(
             value: _preferLowestFare,
-            activeColor: AppTheme.primaryBlue,
+            activeThumbColor: AppTheme.primaryBlue,
             secondary: const Icon(
               Icons.savings_outlined,
               color: Color(0xFFF57C00),
@@ -343,7 +344,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const Divider(height: 1),
           SwitchListTile(
             value: _preferFewerTransfers,
-            activeColor: AppTheme.primaryBlue,
+            activeThumbColor: AppTheme.primaryBlue,
             secondary: const Icon(
               Icons.compare_arrows,
               color: Color(0xFF7B1FA2),
@@ -369,7 +370,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const Divider(height: 1),
           SwitchListTile(
             value: _travelNotifications,
-            activeColor: AppTheme.primaryBlue,
+            activeThumbColor: AppTheme.primaryBlue,
             secondary: const Icon(
               Icons.notifications_active_outlined,
               color: AppTheme.primaryBlue,
@@ -406,7 +407,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
-          children: [
+        children: [
           _buildSavedPlaceTile(
             icon: Icons.home_outlined,
             title: 'Home',
@@ -429,7 +430,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: AppTheme.primaryBlue.withOpacity(0.10),
+                color: AppTheme.primaryBlue.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: const Icon(Icons.add, color: AppTheme.primaryBlue),
@@ -459,7 +460,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         width: 40,
         height: 40,
         decoration: BoxDecoration(
-          color: colour.withOpacity(0.10),
+          color: colour.withValues(alpha: 0.10),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(icon, color: colour),
@@ -489,16 +490,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: () {
-        _showMessage(
-          'The Accessibility Assistance page will be connected next',
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const AccessibilityScreen()),
         );
       },
       child: Ink(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: const Color(0xFF00897B).withOpacity(0.09),
+          color: const Color(0xFF00897B).withValues(alpha: 0.09),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFF00897B).withOpacity(0.35)),
+          border: Border.all(
+            color: const Color(0xFF00897B).withValues(alpha: 0.35),
+          ),
         ),
         child: const Row(
           children: [
@@ -547,7 +551,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
-          children: [
+        children: [
           _buildSettingTile(
             icon: Icons.lock_outline,
             title: 'Change Password',

@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../data/geocoding_service.dart';
 import '../data/input_validator.dart';
+import '../data/journey_notification_service.dart';
 import '../data/local_storage_service.dart';
 import '../data/location_service.dart';
 import '../data/transit_repository.dart';
@@ -18,6 +19,7 @@ class JourneyPlannerScreen extends StatefulWidget {
     this.initialDestination = '',
     this.initialOriginLocation,
     this.initialDestinationLocation,
+    this.initialAccessibleOnly,
     this.onStartJourney,
   });
 
@@ -25,6 +27,7 @@ class JourneyPlannerScreen extends StatefulWidget {
   final String initialDestination;
   final JourneyLocation? initialOriginLocation;
   final JourneyLocation? initialDestinationLocation;
+  final bool? initialAccessibleOnly;
   final ValueChanged<JourneyOption>? onStartJourney;
 
   @override
@@ -34,6 +37,8 @@ class JourneyPlannerScreen extends StatefulWidget {
 class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   final TransitRepository _repository = TransitRepository.instance;
   final LocalStorageService _storage = LocalStorageService.instance;
+  final JourneyNotificationService _notifications =
+      JourneyNotificationService.instance;
   final LocationService _locationService = LocationService();
   final GeocodingService _geocodingService = GeocodingService();
 
@@ -45,7 +50,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   late DateTime _selectedDate;
   late TimeOfDay _selectedTime;
   bool _departAt = true;
-  bool _accessibleOnly = false;
+  late bool _accessibleOnly;
   bool _fewerTransfers = false;
   bool _loading = true;
   bool _searching = false;
@@ -54,7 +59,14 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   String? _loadError;
   double _maximumWalkingDistance = 2000;
   String _routePreference = 'Recommended';
-  final Set<String> _selectedModes = {'Bus', 'MRT', 'LRT', 'KTM', 'Monorail'};
+  final Set<String> _selectedModes = {
+    'Bus',
+    'MRT',
+    'LRT',
+    'KTM',
+    'Monorail',
+    'Ferry',
+  };
   List<JourneyOption> _routeResults = [];
   List<RecentSearch> _recentSearches = [];
   Set<String> _savedJourneyIds = {};
@@ -71,6 +83,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     );
     _originLocation = widget.initialOriginLocation;
     _destinationLocation = widget.initialDestinationLocation;
+    _accessibleOnly = widget.initialAccessibleOnly ?? false;
     _loadData();
   }
 
@@ -97,8 +110,14 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       );
       final recentSearches = await _storage.getRecentSearches();
       final savedJourneys = await _storage.getSavedJourneys();
+      final accessibilityPreferences = widget.initialAccessibleOnly == null
+          ? await _storage.getAccessibilityPreferences()
+          : null;
       if (!mounted) return;
       setState(() {
+        if (accessibilityPreferences != null) {
+          _accessibleOnly = accessibilityPreferences.accessibleRoutesOnly;
+        }
         _recentSearches = recentSearches;
         _savedJourneyIds = savedJourneys.map((item) => item.id).toSet();
         _loading = false;
@@ -139,7 +158,22 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       lastDate: today.add(const Duration(days: 365)),
     );
     if (selected == null || !mounted) return;
-    setState(() => _selectedDate = selected);
+    final now = DateTime.now();
+    final selectedDateTime = DateTime(
+      selected.year,
+      selected.month,
+      selected.day,
+      _selectedTime.hour,
+      _selectedTime.minute,
+    );
+    setState(() {
+      _selectedDate = selected;
+      if (selectedDateTime.isBefore(now)) {
+        final nextAvailable = now.add(const Duration(minutes: 5));
+        _selectedDate = DateUtils.dateOnly(nextAvailable);
+        _selectedTime = TimeOfDay.fromDateTime(nextAvailable);
+      }
+    });
   }
 
   Future<void> _selectTime() async {
@@ -148,6 +182,24 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       initialTime: _selectedTime,
     );
     if (selected == null || !mounted) return;
+    final candidate = DateTime(
+      _selectedDate.year,
+      _selectedDate.month,
+      _selectedDate.day,
+      selected.hour,
+      selected.minute,
+    );
+    if (candidate.isBefore(
+      DateTime.now().subtract(const Duration(minutes: 1)),
+    )) {
+      final nextAvailable = DateTime.now().add(const Duration(minutes: 5));
+      setState(() {
+        _selectedDate = DateUtils.dateOnly(nextAvailable);
+        _selectedTime = TimeOfDay.fromDateTime(nextAvailable);
+      });
+      _showMessage('Departure time must be now or in the future.');
+      return;
+    }
     setState(() => _selectedTime = selected);
   }
 
@@ -437,8 +489,10 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
 
   Future<void> _toggleSavedJourney(JourneyOption option) async {
     final isSaved = _savedJourneyIds.contains(option.id);
+    JourneyReminderResult? reminderResult;
     if (isSaved) {
       await _storage.deleteSavedJourney(option.id);
+      await _notifications.cancelJourney(option.id);
     } else {
       await _storage.saveJourney(
         option,
@@ -447,6 +501,12 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         maximumWalkingMetres: _maximumWalkingDistance.round(),
         accessibleOnly: _accessibleOnly,
         fewerTransfers: _fewerTransfers,
+      );
+      reminderResult = await _notifications.scheduleJourney(
+        journeyId: option.id,
+        origin: option.origin.name,
+        destination: option.destination.name,
+        departureTime: option.departureTime,
       );
     }
     if (!mounted) return;
@@ -457,7 +517,11 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         _savedJourneyIds.add(option.id);
       }
     });
-    _showMessage(isSaved ? 'Journey plan removed.' : 'Journey plan saved.');
+    _showMessage(
+      isSaved
+          ? 'Journey plan and departure reminder removed.'
+          : _savedReminderMessage(reminderResult!),
+    );
   }
 
   Future<void> _startJourney(
@@ -486,6 +550,9 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     });
 
     if (selected != null) {
+      final selectedDeparture = selected.departureTime.isBefore(DateTime.now())
+          ? DateTime.now().add(const Duration(minutes: 5))
+          : selected.departureTime;
       setState(() {
         _originController.text = selected.origin;
         _destinationController.text = selected.destination;
@@ -494,8 +561,8 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         _destinationLocation =
             selected.destinationLocation ??
             _locationFromStopName(selected.destination);
-        _selectedDate = selected.departureTime;
-        _selectedTime = TimeOfDay.fromDateTime(selected.departureTime);
+        _selectedDate = DateUtils.dateOnly(selectedDeparture);
+        _selectedTime = TimeOfDay.fromDateTime(selectedDeparture);
         _routePreference = selected.preference;
         _departAt = selected.departAt;
         _maximumWalkingDistance = selected.maximumWalkingMetres
@@ -506,7 +573,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         if (selected.modes.isNotEmpty) {
           _selectedModes
             ..clear()
-            ..addAll(selected.modes.where((mode) => mode != 'Ferry'));
+            ..addAll(selected.modes);
         }
       });
       await _findRoutes();
@@ -898,7 +965,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   }
 
   Widget _buildTransportModes() {
-    const modes = ['Bus', 'MRT', 'LRT', 'KTM', 'Monorail'];
+    const modes = ['Bus', 'MRT', 'LRT', 'KTM', 'Monorail', 'Ferry'];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -935,7 +1002,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         ),
         const SizedBox(height: 10),
         const Text(
-          'Ferry planning is unavailable because no approved official schedule feed is currently published.',
+          'Penang Ferry planning uses the locally bundled official terminal, fare and operating schedule.',
           style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
         ),
       ],
@@ -1337,6 +1404,8 @@ class SavedJourneyManagerSheet extends StatefulWidget {
 class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
   final LocalStorageService _storage = LocalStorageService.instance;
   final TransitRepository _repository = TransitRepository.instance;
+  final JourneyNotificationService _notifications =
+      JourneyNotificationService.instance;
   List<SavedJourney> _journeys = [];
   bool _loading = true;
 
@@ -1532,18 +1601,24 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
     final recalculated = await _recalculateJourney(updated);
     if (recalculated == null) return;
     await _storage.updateSavedJourney(recalculated);
+    await _scheduleReminder(recalculated);
     await _reload();
   }
 
   Future<void> _duplicateJourney(SavedJourney journey) async {
+    final tomorrow = journey.departureTime.add(const Duration(days: 1));
+    final duplicatedDeparture = tomorrow.isBefore(DateTime.now())
+        ? DateTime.now().add(const Duration(minutes: 5))
+        : tomorrow;
     final request = journey.copyWith(
       id: '${journey.id}-copy-${DateTime.now().microsecondsSinceEpoch}',
-      departureTime: journey.departureTime.add(const Duration(days: 1)),
+      departureTime: duplicatedDeparture,
       savedAt: DateTime.now(),
     );
     final recalculated = await _recalculateJourney(request);
     if (recalculated == null) return;
     await _storage.updateSavedJourney(recalculated);
+    await _scheduleReminder(recalculated);
     await _reload();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1564,8 +1639,10 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
       }
       return null;
     }
-    final modes = request.modes.where((mode) => mode != 'Ferry').toSet();
-    if (modes.isEmpty) modes.addAll(['Bus', 'MRT', 'LRT', 'KTM', 'Monorail']);
+    final modes = request.modes.toSet();
+    if (modes.isEmpty) {
+      modes.addAll(['Bus', 'MRT', 'LRT', 'KTM', 'Monorail', 'Ferry']);
+    }
     try {
       await _repository.ensureDataForJourney(
         origin,
@@ -1635,7 +1712,21 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
     );
     if (confirmed != true) return;
     await _storage.deleteSavedJourney(journey.id);
+    await _notifications.cancelJourney(journey.id);
     await _reload();
+  }
+
+  Future<void> _scheduleReminder(SavedJourney journey) async {
+    final result = await _notifications.scheduleJourney(
+      journeyId: journey.id,
+      origin: journey.origin,
+      destination: journey.destination,
+      departureTime: journey.departureTime,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_savedReminderMessage(result))));
   }
 
   @override
@@ -1803,6 +1894,11 @@ class JourneyRouteMap extends StatelessWidget {
       markerStopsById[leg.to.id] = leg.to;
     }
     final markerStops = markerStopsById.values.toList();
+    final mapPoints = <LatLng>[
+      LatLng(option.origin.latitude, option.origin.longitude),
+      for (final stop in allStops) LatLng(stop.latitude, stop.longitude),
+      LatLng(option.destination.latitude, option.destination.longitude),
+    ];
     double totalLatitude = option.origin.latitude + option.destination.latitude;
     double totalLongitude =
         option.origin.longitude + option.destination.longitude;
@@ -1824,7 +1920,15 @@ class JourneyRouteMap extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: FlutterMap(
-        options: MapOptions(initialCenter: mapCentre, initialZoom: 10),
+        options: MapOptions(
+          initialCenter: mapCentre,
+          initialZoom: 12,
+          initialCameraFit: CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(mapPoints),
+            padding: const EdgeInsets.all(28),
+            maxZoom: 15,
+          ),
+        ),
         children: [
           TileLayer(
             maxZoom: 19,
@@ -2004,4 +2108,19 @@ Color _modeColour(String mode) {
 Color _routeColour(TransitRoute route) {
   final hex = route.colourHex.replaceAll('#', '');
   return Color(int.parse('FF$hex', radix: 16));
+}
+
+String _savedReminderMessage(JourneyReminderResult result) {
+  return switch (result) {
+    JourneyReminderResult.scheduledExact =>
+      'Journey plan saved. A reminder will appear at departure time.',
+    JourneyReminderResult.scheduledInexact =>
+      'Journey plan saved. Enable exact alarms for an exact-time reminder.',
+    JourneyReminderResult.shownNow =>
+      'Journey plan saved. The journey starts now.',
+    JourneyReminderResult.permissionDenied =>
+      'Journey plan saved, but notification permission was not granted.',
+    JourneyReminderResult.failed =>
+      'Journey plan saved, but its departure reminder could not be scheduled.',
+  };
 }

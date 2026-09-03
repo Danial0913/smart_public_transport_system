@@ -27,6 +27,23 @@ class InputValidator {
     return null;
   }
 
+  static String? accessibilityStationSearch(String value) {
+    final text = value.trim();
+    if (text.isNotEmpty && text.length < 2) {
+      return 'Enter at least 2 characters or clear the search.';
+    }
+    if (text.length > 80) return 'Search is limited to 80 characters.';
+    return null;
+  }
+
+  static String? accessibilityObservation(String value) {
+    final note = value.trim();
+    if (note.isEmpty) return 'Describe what you observed.';
+    if (note.length < 10) return 'Enter at least 10 characters.';
+    if (note.length > 300) return 'Keep the observation under 300 characters.';
+    return null;
+  }
+
   static String? journey({
     required JourneyLocation? origin,
     required JourneyLocation? destination,

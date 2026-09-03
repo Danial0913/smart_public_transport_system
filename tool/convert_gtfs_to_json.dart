@@ -88,12 +88,15 @@ Map<String, dynamic> convertFeed(
     final lat = double.tryParse(stopTable.value(row, 'stop_lat'));
     final lon = double.tryParse(stopTable.value(row, 'stop_lon'));
     if (id.isEmpty || lat == null || lon == null) continue;
+    final wheelchairBoarding = stopTable.value(row, 'wheelchair_boarding');
     stops[id] = {
       'id': '$sourceId:$id',
       'name': stopTable.value(row, 'stop_name').trim(),
       'latitude': lat,
       'longitude': lon,
-      'accessible': stopTable.value(row, 'wheelchair_boarding') == '1',
+      'accessible': wheelchairBoarding != '2',
+      'accessibilityKnown':
+          wheelchairBoarding == '1' || wheelchairBoarding == '2',
     };
   }
 
@@ -217,7 +220,8 @@ Map<String, dynamic> convertFeed(
         'frequencyWindows': windows,
       });
       headways.addAll(windows.map((window) => window['headwayMinutes']!));
-      accessible = accessible && trip['accessible'] == '1';
+      // GTFS value 0 or blank means "no information", not inaccessible.
+      accessible = accessible && trip['accessible'] != '2';
       if (shapeId.isNotEmpty && shapes.containsKey('$sourceId:$shapeId')) {
         routeShapes['$sourceId:$shapeId'] = shapes['$sourceId:$shapeId'];
       }
@@ -241,6 +245,21 @@ Map<String, dynamic> convertFeed(
     });
   }
 
+  final calendars = parseCalendars(
+    sourceId,
+    serviceIds,
+    optional('calendar.txt'),
+    optional('calendar_dates.txt'),
+  );
+  if (sourceId == 'rapid-penang') {
+    _addOfficialPenangFerryConnector(
+      routes: routes,
+      stops: stops,
+      usedStops: usedStops,
+      calendars: calendars,
+    );
+  }
+
   return {
     'metadata': {
       'sourceId': sourceId,
@@ -252,14 +271,123 @@ Map<String, dynamic> convertFeed(
     },
     'stops': usedStops.map((id) => stops[id]!).toList(),
     'routes': routes,
-    'calendars': parseCalendars(
-      sourceId,
-      serviceIds,
-      optional('calendar.txt'),
-      optional('calendar_dates.txt'),
-    ),
+    'calendars': calendars,
     'transfers': const <dynamic>[],
   };
+}
+
+void _addOfficialPenangFerryConnector({
+  required List<Map<String, dynamic>> routes,
+  required Map<String, Map<String, dynamic>> stops,
+  required Set<String> usedStops,
+  required List<Map<String, dynamic>> calendars,
+}) {
+  const islandStopId = '12002114'; // Terminal B Weld Quay
+  const mainlandStopId = '12002322'; // (M1) Penang Sentral
+  if (!stops.containsKey(islandStopId) || !stops.containsKey(mainlandStopId)) {
+    return;
+  }
+
+  usedStops.addAll([islandStopId, mainlandStopId]);
+  calendars.add({
+    'serviceId': 'rapid-penang:penang-ferry-daily',
+    'startDate': '2025-01-01',
+    'endDate': null,
+    'weekdays': List<bool>.filled(7, true),
+    'addedDates': <String>[],
+    'removedDates': <String>[],
+  });
+
+  Map<String, dynamic> ferryRoute({
+    required String id,
+    required String directionId,
+    required String headsign,
+    required List<String> stopIds,
+    required List<int> times,
+    required int firstDeparture,
+    required int finalDeparture,
+  }) {
+    final shapeId = 'rapid-penang:penang-ferry-shape-$directionId';
+    final firstStop = stops[stopIds.first.replaceFirst('rapid-penang:', '')]!;
+    final finalStop = stops[stopIds.last.replaceFirst('rapid-penang:', '')]!;
+    return {
+      'id': 'rapid-penang:penang-ferry:$id',
+      'number': 'Ferry',
+      'name': 'Penang Ferry',
+      'mode': 'Ferry',
+      'colour': '#00897B',
+      'baseFare': 2.0,
+      'knownFare': 2.0,
+      'minutesPerStop': 15,
+      'frequencyMinutes': 30,
+      'knownFrequencyMinutes': 30,
+      'accessible': true,
+      'liveSupported': false,
+      'sourceId': 'rapid-penang',
+      'originalRouteId': 'penang-ferry',
+      'stopIds': stopIds,
+      'scheduledTrips': [
+        {
+          'id': 'rapid-penang:penang-ferry-trip-$directionId',
+          'serviceId': 'rapid-penang:penang-ferry-daily',
+          'headsign': headsign,
+          'directionId': directionId,
+          'shapeId': shapeId,
+          'arrivalMinutes': times,
+          'departureMinutes': times,
+          'frequencyWindows': [
+            {
+              'startMinutes': firstDeparture,
+              // The repository treats the window end as exclusive.
+              'endMinutes': finalDeparture + 1,
+              'headwayMinutes': 30,
+            },
+          ],
+        },
+      ],
+      'shapes': {
+        shapeId: [
+          {
+            'latitude': firstStop['latitude'],
+            'longitude': firstStop['longitude'],
+          },
+          {
+            'latitude': finalStop['latitude'],
+            'longitude': finalStop['longitude'],
+          },
+        ],
+      },
+    };
+  }
+
+  // Insert the ferry first so route discovery considers the direct channel
+  // crossing before much longer mainland bus combinations.
+  routes.insertAll(0, [
+    ferryRoute(
+      id: 'island-mainland',
+      directionId: '0',
+      headsign: 'Penang Sentral (Butterworth)',
+      stopIds: const [
+        'rapid-penang:$islandStopId',
+        'rapid-penang:$mainlandStopId',
+      ],
+      times: const [420, 435],
+      firstDeparture: 420,
+      finalDeparture: 1410,
+    ),
+    ferryRoute(
+      id: 'mainland-island',
+      directionId: '1',
+      headsign: 'Weld Quay (George Town)',
+      stopIds: const [
+        'rapid-penang:$mainlandStopId',
+        'rapid-penang:$islandStopId',
+      ],
+      times: const [390, 405],
+      firstDeparture: 390,
+      finalDeparture: 1380,
+    ),
+  ]);
 }
 
 Map<String, List<Map<String, int>>> parseFrequencies(

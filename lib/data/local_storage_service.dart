@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
 import 'package:crypto/crypto.dart';
-
+import '../models/accessibility_models.dart';
 import '../models/transit_models.dart';
 import '../models/travel_history_models.dart';
 import '../models/user_models.dart';
@@ -103,7 +103,7 @@ class LocalStorageService {
         ''');
         await database.execute(
           'CREATE UNIQUE INDEX favourites_reference_unique '
-              'ON favourites(type, reference_id)',
+          'ON favourites(type, reference_id)',
         );
         final now = DateTime.now();
         await database.insert('favourite_categories', {
@@ -166,6 +166,7 @@ class LocalStorageService {
           created_at TEXT NOT NULL
         )
       ''');
+        await _createAccessibilityTables(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -241,7 +242,7 @@ class LocalStorageService {
           ''');
           await database.execute(
             'CREATE UNIQUE INDEX IF NOT EXISTS favourites_reference_unique '
-                'ON favourites(type, reference_id)',
+            'ON favourites(type, reference_id)',
           );
         }
         if (oldVersion < 7) {
@@ -272,13 +273,13 @@ class LocalStorageService {
   }
 
   Future<void> saveJourney(
-      JourneyOption option, {
-        String preference = 'Recommended',
-        bool departAt = true,
-        int maximumWalkingMetres = 2000,
-        bool accessibleOnly = false,
-        bool fewerTransfers = false,
-      }) async {
+    JourneyOption option, {
+    String preference = 'Recommended',
+    bool departAt = true,
+    int maximumWalkingMetres = 2000,
+    bool accessibleOnly = false,
+    bool fewerTransfers = false,
+  }) async {
     await updateSavedJourney(
       SavedJourney.fromOption(
         option,
@@ -881,4 +882,123 @@ class LocalStorageService {
 
     return AppUser.fromMap(userRow);
   }
+
+  Future<AccessibilityPreferences> getAccessibilityPreferences() async {
+    final database = await _db;
+    final rows = await database.query(
+      'accessibility_preferences',
+      where: 'id = 1',
+      limit: 1,
+    );
+    if (rows.isEmpty) return AccessibilityPreferences.defaults;
+    final row = rows.first;
+    return AccessibilityPreferences(
+      selectedNeeds: _decodeStringList(row['selected_needs']).toSet(),
+      accessibleRoutesOnly: (row['accessible_routes_only'] as int? ?? 1) == 1,
+      workingLiftsOnly: (row['working_lifts_only'] as int? ?? 1) == 1,
+      audioGuidance: (row['audio_guidance'] as int? ?? 0) == 1,
+      visualAlerts: (row['visual_alerts'] as int? ?? 1) == 1,
+    );
+  }
+
+  Future<void> saveAccessibilityPreferences(
+    AccessibilityPreferences preferences,
+  ) async {
+    final database = await _db;
+    await database.insert('accessibility_preferences', {
+      'id': 1,
+      'selected_needs': jsonEncode(preferences.selectedNeeds.toList()),
+      'accessible_routes_only': preferences.accessibleRoutesOnly ? 1 : 0,
+      'working_lifts_only': preferences.workingLiftsOnly ? 1 : 0,
+      'audio_guidance': preferences.audioGuidance ? 1 : 0,
+      'visual_alerts': preferences.visualAlerts ? 1 : 0,
+      'updated_at': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<AccessibilityObservation>> getAccessibilityObservations({
+    String? stopId,
+  }) async {
+    final database = await _db;
+    final rows = await database.query(
+      'accessibility_observations',
+      where: stopId == null ? null : 'stop_id = ?',
+      whereArgs: stopId == null ? null : [stopId],
+      orderBy: 'created_at DESC',
+    );
+    return rows.map(_accessibilityObservationFromMap).toList();
+  }
+
+  Future<void> saveAccessibilityObservation(
+    AccessibilityObservation observation,
+  ) async {
+    final database = await _db;
+    await database.insert('accessibility_observations', {
+      'id': observation.id,
+      'stop_id': observation.stopId,
+      'stop_name': observation.stopName,
+      'facility': observation.facility.name,
+      'status': observation.status.name,
+      'note': observation.note.trim(),
+      'created_at': observation.createdAt.toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteAccessibilityObservation(String id) async {
+    final database = await _db;
+    await database.delete(
+      'accessibility_observations',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  AccessibilityObservation _accessibilityObservationFromMap(
+    Map<String, Object?> row,
+  ) {
+    return AccessibilityObservation(
+      id: row['id'] as String,
+      stopId: row['stop_id'] as String,
+      stopName: row['stop_name'] as String,
+      facility: AccessibilityFacility.values.firstWhere(
+        (value) => value.name == row['facility'],
+        orElse: () => AccessibilityFacility.wheelchairAccess,
+      ),
+      status: AccessibilityFacilityStatus.values.firstWhere(
+        (value) => value.name == row['status'],
+        orElse: () => AccessibilityFacilityStatus.unknown,
+      ),
+      note: row['note'] as String,
+      createdAt: DateTime.parse(row['created_at'] as String),
+    );
+  }
+}
+
+Future<void> _createAccessibilityTables(Database database) async {
+  await database.execute('''
+    CREATE TABLE IF NOT EXISTS accessibility_preferences(
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      selected_needs TEXT NOT NULL,
+      accessible_routes_only INTEGER NOT NULL,
+      working_lifts_only INTEGER NOT NULL,
+      audio_guidance INTEGER NOT NULL,
+      visual_alerts INTEGER NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  ''');
+  await database.execute('''
+    CREATE TABLE IF NOT EXISTS accessibility_observations(
+      id TEXT PRIMARY KEY,
+      stop_id TEXT NOT NULL,
+      stop_name TEXT NOT NULL,
+      facility TEXT NOT NULL,
+      status TEXT NOT NULL,
+      note TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  ''');
+  await database.execute(
+    'CREATE INDEX IF NOT EXISTS accessibility_observations_stop_index '
+    'ON accessibility_observations(stop_id, created_at DESC)',
+  );
 }

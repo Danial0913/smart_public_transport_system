@@ -438,14 +438,23 @@ class TransitRepository {
     final regionalPathsByFirstRoute = <String, List<List<TransitRoute>>>{};
 
     final drafts = <_JourneyDraft>[];
-    const maximumDrafts = 120;
+    // Give every nearby origin stop a fair chance. Previously the first stop
+    // (often the stop on the wrong side of the road) could fill the global
+    // draft limit before the correct opposite-direction stop was inspected.
+    const maximumDrafts = 192;
+    const maximumDraftsPerOrigin = 12;
     const maximumRouteChecks = 20000;
     var routeChecks = 0;
 
-    candidatePairs:
+    candidateOrigins:
     for (final originCandidate in originStops) {
+      if (drafts.length >= maximumDrafts) break;
+      final originDraftLimit = math.min(
+        maximumDrafts,
+        drafts.length + maximumDraftsPerOrigin,
+      );
       for (final destinationCandidate in destinationStops) {
-        if (drafts.length >= maximumDrafts) break candidatePairs;
+        if (drafts.length >= originDraftLimit) break;
 
         final boardingStop = originCandidate.stop;
         final alightingStop = destinationCandidate.stop;
@@ -460,7 +469,7 @@ class TransitRepository {
             .toList();
 
         for (final route in firstRoutes) {
-          if (drafts.length >= maximumDrafts) break;
+          if (drafts.length >= originDraftLimit) break;
           final leg = _createLeg(route, boardingStop, alightingStop);
           if (leg == null) continue;
           drafts.add(
@@ -478,21 +487,21 @@ class TransitRepository {
         }
 
         for (final firstRoute in firstRoutes) {
-          if (drafts.length >= maximumDrafts) break;
+          if (drafts.length >= originDraftLimit) break;
           for (final secondRoute in finalRoutes) {
-            if (drafts.length >= maximumDrafts) break;
+            if (drafts.length >= originDraftLimit) break;
             routeChecks++;
             if (routeChecks % 250 == 0) {
               await Future<void>.delayed(Duration.zero);
             }
-            if (routeChecks >= maximumRouteChecks) break candidatePairs;
+            if (routeChecks >= maximumRouteChecks) break candidateOrigins;
             if (firstRoute.id == secondRoute.id) {
               continue;
             }
 
             final transferPairs = _transferPairs(firstRoute, secondRoute);
             for (final pair in transferPairs) {
-              if (drafts.length >= maximumDrafts) break;
+              if (drafts.length >= originDraftLimit) break;
               final firstTransferStop = _stopsById[pair.fromStopId]!;
               final secondTransferStop = _stopsById[pair.toStopId]!;
               final firstLeg = _createLeg(
@@ -533,7 +542,7 @@ class TransitRepository {
         // local bus -> bridge bus -> KTM -> destination bus or rail.
         final finalRouteIds = finalRoutes.map((route) => route.id).toSet();
         for (final firstRoute in firstRoutes) {
-          if (drafts.length >= maximumDrafts) break;
+          if (drafts.length >= originDraftLimit) break;
           final cachedRoutePaths = regionalPathsByFirstRoute.putIfAbsent(
             firstRoute.id,
             () => _routePaths(
@@ -546,12 +555,12 @@ class TransitRepository {
           for (final routePath in cachedRoutePaths.where(
             (path) => finalRouteIds.contains(path.last.id),
           )) {
-            if (drafts.length >= maximumDrafts) break;
+            if (drafts.length >= originDraftLimit) break;
             routeChecks++;
             if (routeChecks % 50 == 0) {
               await Future<void>.delayed(Duration.zero);
             }
-            if (routeChecks >= maximumRouteChecks) break candidatePairs;
+            if (routeChecks >= maximumRouteChecks) break candidateOrigins;
             drafts.addAll(
               _draftsForRoutePath(
                 routes: routePath,
@@ -559,7 +568,7 @@ class TransitRepository {
                 alightingStop: alightingStop,
                 originWalkingMetres: originCandidate.distanceMetres,
                 destinationWalkingMetres: destinationCandidate.distanceMetres,
-                maximumDrafts: math.min(4, maximumDrafts - drafts.length),
+                maximumDrafts: math.min(4, originDraftLimit - drafts.length),
               ),
             );
           }
@@ -988,6 +997,13 @@ class TransitRepository {
           knownFare: template.knownFare,
           departureTime: legDeparture,
           arrivalTime: legArrival,
+          shapePoints: template.route.shapes.isEmpty
+              ? const []
+              : _shapeForLeg(
+                  template.route.shapes.values.first,
+                  template.from,
+                  template.to,
+                ),
         ),
       );
       cursor = legArrival;

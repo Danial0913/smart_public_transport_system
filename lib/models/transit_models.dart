@@ -5,6 +5,7 @@ class TransitStop {
     required this.latitude,
     required this.longitude,
     required this.accessible,
+    this.accessibilityKnown = false,
   });
 
   final String id;
@@ -12,6 +13,7 @@ class TransitStop {
   final double latitude;
   final double longitude;
   final bool accessible;
+  final bool accessibilityKnown;
 
   factory TransitStop.fromJson(Map<String, dynamic> json) {
     return TransitStop(
@@ -20,6 +22,7 @@ class TransitStop {
       latitude: (json['latitude'] as num).toDouble(),
       longitude: (json['longitude'] as num).toDouble(),
       accessible: json['accessible'] as bool? ?? false,
+      accessibilityKnown: json['accessibilityKnown'] as bool? ?? false,
     );
   }
 }

@@ -264,7 +264,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
         ? suppliedInitialLocation
         : null;
     final initialCentre = initialLocation == null
-        ? const LatLng(4.2, 101.5)
+        ? const LatLng(5.4145, 100.3292)
         : LatLng(initialLocation.latitude, initialLocation.longitude);
     final selectedPoint = _selectedPoint;
     final nearestStop = _nearestStop;
@@ -316,7 +316,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
                   mapController: _mapController,
                   options: MapOptions(
                     initialCenter: initialCentre,
-                    initialZoom: initialLocation == null ? 6 : 14,
+                    initialZoom: initialLocation == null ? 11 : 14,
                     onMapReady: _onMapReady,
                     onPositionChanged: _onMapPositionChanged,
                     onTap: (_, point) async {
