@@ -1425,7 +1425,48 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       ),
     );
   }
+  Future<double?> _getBudgetExceededAmount() async {
+    final now = DateTime.now();
 
+    final budget =
+    await _storage.getMonthlyTravelBudget(now);
+
+    if (budget == null || budget <= 0) {
+      return null;
+    }
+
+    final monthStart = DateTime(
+      now.year,
+      now.month,
+    );
+
+    final nextMonth = DateTime(
+      now.year,
+      now.month + 1,
+    );
+
+    final completedJourneys =
+    await _storage.getCompletedJourneys(
+      start: monthStart,
+      end: nextMonth,
+    );
+
+    var monthlySpending = 0.0;
+
+    for (final completedJourney
+    in completedJourneys) {
+      monthlySpending += completedJourney.fare;
+    }
+
+    final exceededAmount =
+        monthlySpending - budget;
+
+    if (exceededAmount <= 0) {
+      return null;
+    }
+
+    return exceededAmount;
+  }
   Future<void> _completeJourney() async {
     final journey = _activeJourney;
 
@@ -1496,7 +1537,21 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     setState(() => _savingCompletedJourney = true);
 
     try {
-      await _storage.recordCompletedJourney(journey);
+      await _storage.recordCompletedJourney(
+        journey,
+      );
+
+      double? budgetExceededAmount;
+
+      try {
+        budgetExceededAmount =
+        await _getBudgetExceededAmount();
+      } catch (_) {
+        // The journey was saved successfully.
+        // A budget-checking problem should not
+        // report that the journey failed to save.
+        budgetExceededAmount = null;
+      }
 
       if (!mounted) return;
 
@@ -1508,14 +1563,44 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       });
 
       if (_mapReady) {
-        _refreshVisibleMapContent(_mapController.camera);
+        _refreshVisibleMapContent(
+          _mapController.camera,
+        );
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Journey saved to travel history.'),
-        ),
-      );
+      if (budgetExceededAmount != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.red.shade700,
+            duration: const Duration(seconds: 6),
+            content: Row(
+              children: [
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  color: Colors.white,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Journey saved. You have exceeded '
+                        'your monthly transport budget by '
+                        'RM${budgetExceededAmount.toStringAsFixed(2)}.',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Journey saved to travel history.',
+            ),
+          ),
+        );
+      }
+
       widget.onJourneyEnded?.call();
     } catch (error) {
       if (!mounted) return;

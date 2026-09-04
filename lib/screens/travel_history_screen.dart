@@ -197,22 +197,51 @@ class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
   }
 
   Future<void> _setBudget() async {
-    final budgetCtrl = TextEditingController(
-      text: _monthlyBudget?.toStringAsFixed(2) ?? '',
-    );
+    final budgetFormKey = GlobalKey<FormState>();
+
+    var budgetText =
+        _monthlyBudget?.toStringAsFixed(2) ?? '';
 
     final amount = await showDialog<double>(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
           title: const Text('Set Monthly Budget'),
-          content: TextField(
-            controller: budgetCtrl,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
-              labelText: 'Budget amount',
-              prefixText: 'RM ',
-              border: OutlineInputBorder(),
+          content: Form(
+            key: budgetFormKey,
+            child: TextFormField(
+              initialValue: budgetText,
+              keyboardType:
+              const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Budget amount',
+                prefixText: 'RM ',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) {
+                budgetText = value;
+              },
+              validator: (value) {
+                if (value == null ||
+                    value.trim().isEmpty) {
+                  return 'Please enter a budget amount.';
+                }
+
+                final enteredAmount =
+                double.tryParse(value.trim());
+
+                if (enteredAmount == null) {
+                  return 'Please enter a valid amount.';
+                }
+
+                if (enteredAmount <= 0) {
+                  return 'Budget must be more than RM0.';
+                }
+
+                return null;
+              },
             ),
           ),
           actions: [
@@ -224,13 +253,19 @@ class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
             ),
             FilledButton(
               onPressed: () {
-                final value = double.tryParse(budgetCtrl.text.trim());
-
-                if (value == null || value <= 0) {
+                if (!budgetFormKey.currentState!
+                    .validate()) {
                   return;
                 }
 
-                Navigator.pop(dialogContext, value);
+                final enteredAmount = double.parse(
+                  budgetText.trim(),
+                );
+
+                Navigator.pop(
+                  dialogContext,
+                  enteredAmount,
+                );
               },
               child: const Text('Save'),
             ),
@@ -239,16 +274,46 @@ class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
       },
     );
 
-    budgetCtrl.dispose();
+    if (amount == null || !mounted) {
+      return;
+    }
 
-    if (amount == null) return;
+    try {
+      await _storage.setMonthlyTravelBudget(
+        month: DateTime.now(),
+        amount: amount,
+      );
 
-    await _storage.setMonthlyTravelBudget(
-      month: DateTime.now(),
-      amount: amount,
-    );
+      if (!mounted) {
+        return;
+      }
 
-    await _loadHistory();
+      await _loadHistory();
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Monthly budget updated successfully.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Unable to save budget: $error',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _deleteJourney(CompletedJourney journey) async {
