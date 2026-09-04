@@ -1619,9 +1619,9 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       JourneyOption journey,
       ) {
     return DraggableScrollableSheet(
-      initialChildSize: 0.62,
-      minChildSize: 0.07,
-      maxChildSize: 0.72,
+      initialChildSize: 0.70,
+      minChildSize: 0.042,
+      maxChildSize: 0.70,
       expand: false,
       snap: true,
       snapSizes: const [
