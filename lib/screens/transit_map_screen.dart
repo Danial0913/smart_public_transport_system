@@ -12,9 +12,10 @@ import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
 
 class TransitMapScreen extends StatefulWidget {
-  const TransitMapScreen({super.key, this.journey});
+  const TransitMapScreen({super.key, this.journey, this.onJourneyEnded});
 
   final JourneyOption? journey;
+  final VoidCallback? onJourneyEnded;
 
   @override
   State<TransitMapScreen> createState() => _TransitMapScreenState();
@@ -1515,6 +1516,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
           content: Text('Journey saved to travel history.'),
         ),
       );
+      widget.onJourneyEnded?.call();
     } catch (error) {
       if (!mounted) return;
 
@@ -1592,6 +1594,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
         if (_mapReady) {
           _refreshVisibleMapContent(_mapController.camera);
         }
+        widget.onJourneyEnded?.call();
       },
       children: [
         _buildJourneySequence(journey),

@@ -19,6 +19,7 @@ class JourneyNotificationService {
 
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
+  final ValueNotifier<String?> selectedJourneyId = ValueNotifier<String?>(null);
   Future<void>? _initialisation;
 
   Future<void> initialise() {
@@ -42,7 +43,32 @@ class JourneyNotificationService {
           requestSoundPermission: false,
         ),
       ),
+      onDidReceiveNotificationResponse: _handleNotificationResponse,
     );
+
+    final launchDetails = await _notifications
+        .getNotificationAppLaunchDetails();
+    if (launchDetails?.didNotificationLaunchApp == true) {
+      _selectJourney(launchDetails?.notificationResponse?.payload);
+    }
+  }
+
+  void _handleNotificationResponse(NotificationResponse response) {
+    _selectJourney(response.payload);
+  }
+
+  void _selectJourney(String? journeyId) {
+    final value = journeyId?.trim();
+    if (value == null || value.isEmpty) return;
+    // Clearing first also allows two taps on the same reminder to notify UI.
+    selectedJourneyId.value = null;
+    selectedJourneyId.value = value;
+  }
+
+  void clearSelectedJourney(String journeyId) {
+    if (selectedJourneyId.value == journeyId) {
+      selectedJourneyId.value = null;
+    }
   }
 
   Future<JourneyReminderResult> scheduleJourney({

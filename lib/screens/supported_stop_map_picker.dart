@@ -192,6 +192,7 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
     final selectedPoint = _selectedPoint;
     final zoom = camera.zoom;
     if (selectedPoint == null || zoom < 9) {
+      if (_visibleMapStops.isEmpty) return;
       setState(() => _visibleMapStops = []);
       return;
     }
@@ -223,7 +224,17 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
       return first.compareTo(second);
     });
 
-    setState(() => _visibleMapStops = visibleStops.take(40).toList());
+    final nextStops = visibleStops.take(40).toList();
+    if (_sameStops(_visibleMapStops, nextStops)) return;
+    setState(() => _visibleMapStops = nextStops);
+  }
+
+  bool _sameStops(List<TransitStop> first, List<TransitStop> second) {
+    if (first.length != second.length) return false;
+    for (var index = 0; index < first.length; index++) {
+      if (first[index].id != second[index].id) return false;
+    }
+    return true;
   }
 
   double _distanceSquared(

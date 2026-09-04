@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../data/geocoding_service.dart';
 import '../data/input_validator.dart';
+import '../data/journey_notification_service.dart';
 import '../data/local_storage_service.dart';
 import '../data/location_service.dart';
 import '../data/malaysia_time.dart';
@@ -28,6 +29,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final TransitRepository _repository = TransitRepository.instance;
   final LocationService _locationService = LocationService();
   final GeocodingService _geocodingService = GeocodingService();
+  final JourneyNotificationService _notifications =
+      JourneyNotificationService.instance;
 
   final TextEditingController _originController = TextEditingController();
   final TextEditingController _destinationController = TextEditingController();
@@ -39,10 +42,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _gettingLocation = false;
   bool _choosingLocation = false;
   bool _dashboardRequestInFlight = false;
+  bool _handlingNotificationJourney = false;
   Timer? _clockTimer;
+  final Set<String> _automaticallyOpenedJourneyIds = <String>{};
   Key _plannerKey = UniqueKey();
   String? _selectedCategoryId;
   JourneyOption? _activeJourney;
+  SavedJourney? _autoStartSavedJourney;
+  SavedJourney? _activeSavedJourney;
+  Set<String> _endedJourneyRunKeys = <String>{};
   Key _mapKey = UniqueKey();
 
   List<FavouriteCategory> _categories = [];
@@ -62,18 +70,59 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _notifications.selectedJourneyId.addListener(
+      _onNotificationJourneySelected,
+    );
+    unawaited(_initialiseNotificationNavigation());
     _fetchDashboardData();
     _clockTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      _updateJourneyClock();
     });
   }
 
   @override
   void dispose() {
+    _notifications.selectedJourneyId.removeListener(
+      _onNotificationJourneySelected,
+    );
     _clockTimer?.cancel();
     _originController.dispose();
     _destinationController.dispose();
     super.dispose();
+  }
+
+  Future<void> _initialiseNotificationNavigation() async {
+    await _notifications.initialise();
+    if (mounted) _onNotificationJourneySelected();
+  }
+
+  void _onNotificationJourneySelected() {
+    unawaited(_openNotificationJourney());
+  }
+
+  Future<void> _openNotificationJourney() async {
+    final journeyId = _notifications.selectedJourneyId.value;
+    if (journeyId == null || _handlingNotificationJourney) return;
+
+    _handlingNotificationJourney = true;
+    try {
+      final journeys = await _storage.getSavedJourneys();
+      if (!mounted) return;
+      final matching = journeys.where((item) => item.id == journeyId);
+      _notifications.clearSelectedJourney(journeyId);
+      if (matching.isEmpty) {
+        _showMessage('This saved journey is no longer available.');
+        return;
+      }
+      _startSavedJourney(matching.first);
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Unable to open this journey. Please try again.');
+      }
+    } finally {
+      _handlingNotificationJourney = false;
+    }
   }
 
   Future<void> _fetchDashboardData() async {
@@ -88,11 +137,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       await _storage.initialise();
 
-      final categories = await _storage.getFavouriteCategories();
-      final favourites = await _storage.getFavourites();
-      final recentSearches = await _storage.getRecentSearches();
-      final savedJourneys = await _storage.getSavedJourneys();
-      final frequentServices = await _storage.getFrequentServices();
+      final results = await Future.wait<Object>([
+        _storage.getFavouriteCategories(),
+        _storage.getFavourites(),
+        _storage.getRecentSearches(),
+        _storage.getSavedJourneys(),
+        _storage.getFrequentServices(),
+        _storage.getEndedJourneyRunKeys(),
+      ]);
+      final categories = results[0] as List<FavouriteCategory>;
+      final favourites = results[1] as List<FavouriteItem>;
+      final recentSearches = results[2] as List<RecentSearch>;
+      final savedJourneys = results[3] as List<SavedJourney>;
+      final frequentServices = results[4] as List<ServiceUsage>;
+      final endedJourneyRunKeys = results[5] as Set<String>;
 
       if (!mounted) return;
       setState(() {
@@ -101,17 +159,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _recentSearches = recentSearches;
         _savedJourneys = savedJourneys;
         _frequentServices = frequentServices;
+        _endedJourneyRunKeys = endedJourneyRunKeys;
         _isLoading = false;
       });
-    } catch (error) {
+      _startDueJourneyIfNeeded();
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
-      _showMessage('Failed to load dashboard data: $error');
+      _showMessage('Unable to load your saved information. Please try again.');
     } finally {
       _dashboardRequestInFlight = false;
     }
+  }
+
+  void _startDueJourneyIfNeeded() {
+    if (_activeJourney != null || _savedJourneys.isEmpty) return;
+    final now = MalaysiaTime.now();
+    final due =
+        _savedJourneys.where((journey) {
+          if (_automaticallyOpenedJourneyIds.contains(journey.id) ||
+              _endedJourneyRunKeys.contains(
+                LocalStorageService.journeyRunKey(
+                  journey.id,
+                  journey.departureTime,
+                ),
+              ) ||
+              journey.departureTime.isAfter(now)) {
+            return false;
+          }
+          final visibleMinutes = journey.durationMinutes < 15
+              ? 15
+              : journey.durationMinutes;
+          return now.isBefore(
+            journey.departureTime.add(Duration(minutes: visibleMinutes)),
+          );
+        }).toList()..sort(
+          (first, second) =>
+              second.departureTime.compareTo(first.departureTime),
+        );
+    if (due.isEmpty) return;
+    _automaticallyOpenedJourneyIds.add(due.first.id);
+    _startSavedJourney(due.first);
+  }
+
+  void _updateJourneyClock() {
+    final activeJourney = _activeJourney;
+    if (activeJourney != null &&
+        !MalaysiaTime.now().isBefore(activeJourney.arrivalTime)) {
+      _clearActiveJourney();
+      return;
+    }
+    setState(() {});
+    _startDueJourneyIfNeeded();
   }
 
   void _changePage(int index) {
@@ -252,18 +353,92 @@ class _DashboardScreenState extends State<DashboardScreen> {
           'GPS selected. Nearest transport stop: ${nearestStop.name}',
         );
       }
-    } catch (error) {
-      if (mounted) _showMessage('Unable to get current location: $error');
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Unable to determine your location. Please try again.');
+      }
     } finally {
       if (mounted) setState(() => _gettingLocation = false);
     }
   }
 
   void _openJourneyOnMap(JourneyOption option) {
+    final startingSavedJourney =
+        _autoStartSavedJourney ??
+        _savedJourneys.cast<SavedJourney?>().firstWhere(
+          (journey) => journey?.id == option.id,
+          orElse: () => null,
+        );
+    if (startingSavedJourney != null) {
+      _endedJourneyRunKeys.remove(
+        LocalStorageService.journeyRunKey(
+          startingSavedJourney.id,
+          startingSavedJourney.departureTime,
+        ),
+      );
+      unawaited(_clearPersistedJourneyEnd(startingSavedJourney.id));
+    }
     setState(() {
       _activeJourney = option;
+      _activeSavedJourney = startingSavedJourney;
+      _autoStartSavedJourney = null;
       _mapKey = UniqueKey();
       _selectedIndex = 2;
+    });
+  }
+
+  void _clearActiveJourney() {
+    if (_activeJourney == null) return;
+    final savedJourney = _activeSavedJourney;
+    setState(() {
+      _activeJourney = null;
+      _activeSavedJourney = null;
+      _mapKey = UniqueKey();
+    });
+    if (savedJourney != null) {
+      final key = LocalStorageService.journeyRunKey(
+        savedJourney.id,
+        savedJourney.departureTime,
+      );
+      _endedJourneyRunKeys.add(key);
+      unawaited(_persistJourneyEnd(savedJourney));
+    }
+  }
+
+  Future<void> _clearPersistedJourneyEnd(String journeyId) async {
+    try {
+      await _storage.clearEndedJourneyRun(journeyId);
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Unable to update this journey. Please try again.');
+      }
+    }
+  }
+
+  Future<void> _persistJourneyEnd(SavedJourney journey) async {
+    try {
+      await _storage.markJourneyRunEnded(
+        journeyId: journey.id,
+        departureTime: journey.departureTime,
+      );
+    } catch (_) {
+      if (mounted) {
+        _showMessage(
+          'Journey closed, but its status could not be saved. Please try again.',
+        );
+      }
+    }
+  }
+
+  void _startSavedJourney(SavedJourney journey) {
+    setState(() {
+      _originController.text = journey.origin;
+      _destinationController.text = journey.destination;
+      _originLocation = journey.originLocation;
+      _destinationLocation = journey.destinationLocation;
+      _autoStartSavedJourney = journey;
+      _plannerKey = UniqueKey();
+      _selectedIndex = 1;
     });
   }
 
@@ -320,8 +495,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (area != null) {
           await _repository.ensureDataNear(area.latitude, area.longitude);
         }
-      } catch (error) {
-        if (mounted) _showMessage('Unable to load transport data: $error');
+      } catch (_) {
+        if (mounted) {
+          _showMessage(
+            'Unable to load transport information. Please try again.',
+          );
+        }
         return;
       }
       if (!mounted) return;
@@ -413,9 +592,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
       createdAt: DateTime.now(),
     );
 
-    await _storage.addFavourite(favourite);
-    await _fetchDashboardData();
-    _showMessage('Favourite added to ${category.name}.');
+    try {
+      await _storage.addFavourite(favourite);
+      await _fetchDashboardData();
+      _showMessage('Favourite added to ${category.name}.');
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Unable to save this favourite. Please try again.');
+      }
+    }
   }
 
   Future<_FavouriteChoice?> _chooseFavouriteChoice(
@@ -489,12 +674,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _showSavedPlans() async {
-    await showModalBottomSheet<SavedJourney>(
+    final selected = await showModalBottomSheet<SavedJourney>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
       builder: (_) => const SavedJourneyManagerSheet(),
     );
+    if (selected != null && mounted) {
+      _startSavedJourney(selected);
+      return;
+    }
+    await _fetchDashboardData();
+  }
+
+  Future<void> _showUpcomingJourneys() async {
+    final selected = await showModalBottomSheet<SavedJourney>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => const SavedJourneyManagerSheet(upcomingOnly: true),
+    );
+    if (selected != null && mounted) {
+      _startSavedJourney(selected);
+      return;
+    }
     await _fetchDashboardData();
   }
 
@@ -502,8 +705,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (favourite.type == 'Stop') {
       try {
         await _repository.ensureDataForReference(favourite.referenceId);
-      } catch (error) {
-        if (mounted) _showMessage('Unable to load this stop: $error');
+      } catch (_) {
+        if (mounted) {
+          _showMessage('Unable to load this stop. Please try again.');
+        }
         return;
       }
       final stop = _repository.findStopById(favourite.referenceId);
@@ -533,8 +738,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     try {
       await _repository.ensureDataForReference(favourite.referenceId);
-    } catch (error) {
-      if (mounted) _showMessage('Unable to load this route: $error');
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Unable to load this route. Please try again.');
+      }
       return;
     }
     final route = _repository.findRouteById(favourite.referenceId);
@@ -548,8 +755,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _openFrequentService(ServiceUsage service) async {
     try {
       await _repository.ensureDataForReference(service.routeId);
-    } catch (error) {
-      if (mounted) _showMessage('Unable to load this service: $error');
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Unable to load this service. Please try again.');
+      }
       return;
     }
     final route = _repository.findRouteById(service.routeId);
@@ -563,7 +772,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _showRouteDetails(TransitRoute route) {
     final stops = _repository.stopsForRoute(route);
     final fee = route.knownFare == null
-        ? 'Estimated fee: RM ${route.baseFare.toStringAsFixed(2)}'
+        ? 'Fee unavailable'
         : 'Official fee: RM ${route.knownFare!.toStringAsFixed(2)}';
     final frequency = route.knownFrequencyMinutes == null
         ? 'See scheduled departures in journey planning'
@@ -691,10 +900,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           initialDestination: _destinationController.text,
           initialOriginLocation: _originLocation,
           initialDestinationLocation: _destinationLocation,
+          initialSavedJourney: _autoStartSavedJourney,
           onStartJourney: _openJourneyOnMap,
         );
       case 2:
-        return TransitMapScreen(key: _mapKey, journey: _activeJourney);
+        return TransitMapScreen(
+          key: _mapKey,
+          journey: _activeJourney,
+          onJourneyEnded: _clearActiveJourney,
+        );
       case 3:
         return const TravelHistoryScreen();
       case 4:
@@ -818,7 +1032,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _buildSectionHeader(
             title: 'Upcoming Journey',
             actionText: 'See All',
-            onAction: _showSavedPlans,
+            onAction: _showUpcomingJourneys,
           ),
           const SizedBox(height: 12),
           _buildUpcomingJourney(),
@@ -1081,7 +1295,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(width: 16),
                 Text(
                   upcomingJourney.knownFare == null
-                      ? 'Estimated fee RM ${upcomingJourney.fare.toStringAsFixed(2)}'
+                      ? 'Fee unavailable'
                       : 'Fee RM ${upcomingJourney.knownFare!.toStringAsFixed(2)}',
                 ),
                 const Spacer(),
@@ -1297,6 +1511,7 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
   List<FavouriteCategory> _categories = [];
   List<FavouriteItem> _favourites = [];
   bool _isLoading = true;
+  String? _loadError;
 
   @override
   void initState() {
@@ -1305,14 +1520,41 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
   }
 
   Future<void> _fetchFavourites() async {
-    final categories = await _storage.getFavouriteCategories();
-    final favourites = await _storage.getFavourites();
-    if (!mounted) return;
-    setState(() {
-      _categories = categories;
-      _favourites = favourites;
-      _isLoading = false;
-    });
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
+    }
+    try {
+      final results = await Future.wait<Object>([
+        _storage.getFavouriteCategories(),
+        _storage.getFavourites(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _categories = results[0] as List<FavouriteCategory>;
+        _favourites = results[1] as List<FavouriteItem>;
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'Unable to load favourites. Please try again.';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _saveFavouriteChange(Future<void> Function() operation) async {
+    try {
+      await operation();
+      await _fetchFavourites();
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Unable to update favourites. Please try again.');
+      }
+    }
   }
 
   Future<void> _addCategory() async {
@@ -1347,11 +1589,12 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
       _showMessage(validationError);
       return;
     }
-    await _storage.addFavouriteCategory(
-      name: name.trim(),
-      colourValue: 0xFF7B1FA2,
-    );
-    await _fetchFavourites();
+    await _saveFavouriteChange(() async {
+      await _storage.addFavouriteCategory(
+        name: name.trim(),
+        colourValue: 0xFF7B1FA2,
+      );
+    });
   }
 
   Future<void> _renameCategory(FavouriteCategory category) async {
@@ -1390,10 +1633,11 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
       _showMessage(validationError);
       return;
     }
-    await _storage.updateFavouriteCategory(
-      category.copyWith(name: name.trim()),
+    await _saveFavouriteChange(
+      () => _storage.updateFavouriteCategory(
+        category.copyWith(name: name.trim()),
+      ),
     );
-    await _fetchFavourites();
   }
 
   Future<void> _deleteCategory(FavouriteCategory category) async {
@@ -1421,21 +1665,23 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
       ),
     );
     if (confirmed != true) return;
-    await _storage.deleteFavouriteCategory(category.id);
-    await _fetchFavourites();
+    await _saveFavouriteChange(
+      () => _storage.deleteFavouriteCategory(category.id),
+    );
   }
 
   Future<void> _moveFavourite(
     FavouriteItem favourite,
     String categoryId,
   ) async {
-    await _storage.updateFavourite(favourite.copyWith(categoryId: categoryId));
-    await _fetchFavourites();
+    await _saveFavouriteChange(
+      () =>
+          _storage.updateFavourite(favourite.copyWith(categoryId: categoryId)),
+    );
   }
 
   Future<void> _deleteFavourite(FavouriteItem favourite) async {
-    await _storage.deleteFavourite(favourite.id);
-    await _fetchFavourites();
+    await _saveFavouriteChange(() => _storage.deleteFavourite(favourite.id));
   }
 
   void _showMessage(String message) {
@@ -1476,6 +1722,25 @@ class _FavouriteManagerSheetState extends State<FavouriteManagerSheet> {
             Expanded(
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
+                  : _loadError != null
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.error_outline, size: 44),
+                            const SizedBox(height: 10),
+                            Text(_loadError!, textAlign: TextAlign.center),
+                            const SizedBox(height: 12),
+                            FilledButton(
+                              onPressed: _fetchFavourites,
+                              child: const Text('Try Again'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
                   : ListView(
                       padding: const EdgeInsets.all(16),
                       children: [

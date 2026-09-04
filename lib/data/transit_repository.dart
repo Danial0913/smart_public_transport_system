@@ -199,9 +199,11 @@ class TransitRepository {
       for (final stopId in route.stopIds) {
         _routesByStopId.putIfAbsent(stopId, () => []).add(route);
       }
-      // A route can contain many scheduled trips and shape points. Yield after
-      // every route so parsing a feed does not monopolise the UI isolate.
-      await Future<void>.delayed(Duration.zero);
+      // Yield in small batches. Yielding after every route caused hundreds of
+      // unnecessary event-loop turns for the larger regional feeds.
+      if (index > 0 && index % 12 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
     }
 
     final transferItems = data['transfers'] as List<dynamic>? ?? const [];

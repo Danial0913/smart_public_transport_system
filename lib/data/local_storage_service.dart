@@ -25,7 +25,7 @@ class LocalStorageService {
 
     _database = await openDatabase(
       databasePath,
-      version: 8,
+      version: 9,
       onConfigure: (database) async {
         await database.execute('PRAGMA foreign_keys = ON');
       },
@@ -91,6 +91,7 @@ class LocalStorageService {
             UNIQUE(origin, destination)
           )
         ''');
+        await _createEndedJourneyRunsTable(database);
         await database.execute('''
           CREATE TABLE service_usage(
             route_id TEXT PRIMARY KEY,
@@ -103,7 +104,7 @@ class LocalStorageService {
         ''');
         await database.execute(
           'CREATE UNIQUE INDEX favourites_reference_unique '
-              'ON favourites(type, reference_id)',
+          'ON favourites(type, reference_id)',
         );
         final now = DateTime.now();
         await database.insert('favourite_categories', {
@@ -242,7 +243,7 @@ class LocalStorageService {
           ''');
           await database.execute(
             'CREATE UNIQUE INDEX IF NOT EXISTS favourites_reference_unique '
-                'ON favourites(type, reference_id)',
+            'ON favourites(type, reference_id)',
           );
         }
         if (oldVersion < 7) {
@@ -263,6 +264,9 @@ class LocalStorageService {
         )
       ''');
         }
+        if (oldVersion < 9) {
+          await _createEndedJourneyRunsTable(database);
+        }
       },
     );
   }
@@ -273,13 +277,13 @@ class LocalStorageService {
   }
 
   Future<void> saveJourney(
-      JourneyOption option, {
-        String preference = 'Recommended',
-        bool departAt = true,
-        int maximumWalkingMetres = 2000,
-        bool accessibleOnly = false,
-        bool fewerTransfers = false,
-      }) async {
+    JourneyOption option, {
+    String preference = 'Recommended',
+    bool departAt = true,
+    int maximumWalkingMetres = 2000,
+    bool accessibleOnly = false,
+    bool fewerTransfers = false,
+  }) async {
     await updateSavedJourney(
       SavedJourney.fromOption(
         option,
@@ -336,6 +340,47 @@ class LocalStorageService {
         whereArgs: [id],
       );
     });
+  }
+
+  Future<Set<String>> getEndedJourneyRunKeys() async {
+    final database = await _db;
+    final rows = await database.query(
+      'ended_journey_runs',
+      columns: ['journey_id', 'departure_time'],
+    );
+    return rows
+        .map(
+          (row) => _journeyRunKey(
+            row['journey_id'] as String,
+            DateTime.parse(row['departure_time'] as String),
+          ),
+        )
+        .toSet();
+  }
+
+  Future<void> markJourneyRunEnded({
+    required String journeyId,
+    required DateTime departureTime,
+  }) async {
+    final database = await _db;
+    await database.insert('ended_journey_runs', {
+      'journey_id': journeyId,
+      'departure_time': departureTime.toIso8601String(),
+      'ended_at': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> clearEndedJourneyRun(String journeyId) async {
+    final database = await _db;
+    await database.delete(
+      'ended_journey_runs',
+      where: 'journey_id = ?',
+      whereArgs: [journeyId],
+    );
+  }
+
+  static String journeyRunKey(String journeyId, DateTime departureTime) {
+    return _journeyRunKey(journeyId, departureTime);
   }
 
   Future<void> recordSearch({
@@ -839,17 +884,13 @@ class LocalStorageService {
   }) async {
     final database = await _db;
 
-    await database.insert(
-      'users',
-      {
-        'full_name': fullName.trim(),
-        'email': email.trim().toLowerCase(),
-        'phone': phone.trim(),
-        'password_hash': _hashPassword(password),
-        'created_at': DateTime.now().toIso8601String(),
-      },
-      conflictAlgorithm: ConflictAlgorithm.abort,
-    );
+    await database.insert('users', {
+      'full_name': fullName.trim(),
+      'email': email.trim().toLowerCase(),
+      'phone': phone.trim(),
+      'password_hash': _hashPassword(password),
+      'created_at': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.abort);
   }
 
   Future<AppUser?> loginUser({
@@ -871,10 +912,8 @@ class LocalStorageService {
     }
 
     final userRow = rows.first;
-    final savedPasswordHash =
-    userRow['password_hash'] as String;
-    final enteredPasswordHash =
-    _hashPassword(password);
+    final savedPasswordHash = userRow['password_hash'] as String;
+    final enteredPasswordHash = _hashPassword(password);
 
     if (savedPasswordHash != enteredPasswordHash) {
       return null;
@@ -902,8 +941,8 @@ class LocalStorageService {
   }
 
   Future<void> saveAccessibilityPreferences(
-      AccessibilityPreferences preferences,
-      ) async {
+    AccessibilityPreferences preferences,
+  ) async {
     final database = await _db;
     await database.insert('accessibility_preferences', {
       'id': 1,
@@ -930,8 +969,8 @@ class LocalStorageService {
   }
 
   Future<void> saveAccessibilityObservation(
-      AccessibilityObservation observation,
-      ) async {
+    AccessibilityObservation observation,
+  ) async {
     final database = await _db;
     await database.insert('accessibility_observations', {
       'id': observation.id,
@@ -954,18 +993,18 @@ class LocalStorageService {
   }
 
   AccessibilityObservation _accessibilityObservationFromMap(
-      Map<String, Object?> row,
-      ) {
+    Map<String, Object?> row,
+  ) {
     return AccessibilityObservation(
       id: row['id'] as String,
       stopId: row['stop_id'] as String,
       stopName: row['stop_name'] as String,
       facility: AccessibilityFacility.values.firstWhere(
-            (value) => value.name == row['facility'],
+        (value) => value.name == row['facility'],
         orElse: () => AccessibilityFacility.wheelchairAccess,
       ),
       status: AccessibilityFacilityStatus.values.firstWhere(
-            (value) => value.name == row['status'],
+        (value) => value.name == row['status'],
         orElse: () => AccessibilityFacilityStatus.unknown,
       ),
       note: row['note'] as String,
@@ -999,6 +1038,21 @@ Future<void> _createAccessibilityTables(Database database) async {
   ''');
   await database.execute(
     'CREATE INDEX IF NOT EXISTS accessibility_observations_stop_index '
-        'ON accessibility_observations(stop_id, created_at DESC)',
+    'ON accessibility_observations(stop_id, created_at DESC)',
   );
+}
+
+Future<void> _createEndedJourneyRunsTable(Database database) async {
+  await database.execute('''
+    CREATE TABLE IF NOT EXISTS ended_journey_runs(
+      journey_id TEXT PRIMARY KEY,
+      departure_time TEXT NOT NULL,
+      ended_at TEXT NOT NULL,
+      FOREIGN KEY(journey_id) REFERENCES saved_journeys(id) ON DELETE CASCADE
+    )
+  ''');
+}
+
+String _journeyRunKey(String journeyId, DateTime departureTime) {
+  return '$journeyId|${departureTime.toIso8601String()}';
 }

@@ -3,12 +3,14 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../data/geocoding_service.dart';
+import '../data/ferry_api_service.dart';
 import '../data/input_validator.dart';
 import '../data/journey_notification_service.dart';
 import '../data/local_storage_service.dart';
 import '../data/location_service.dart';
 import '../data/malaysia_time.dart';
 import '../data/transit_repository.dart';
+import '../models/accessibility_models.dart';
 import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
 import 'supported_stop_map_picker.dart';
@@ -21,6 +23,7 @@ class JourneyPlannerScreen extends StatefulWidget {
     this.initialOriginLocation,
     this.initialDestinationLocation,
     this.initialAccessibleOnly,
+    this.initialSavedJourney,
     this.onStartJourney,
   });
 
@@ -29,6 +32,7 @@ class JourneyPlannerScreen extends StatefulWidget {
   final JourneyLocation? initialOriginLocation;
   final JourneyLocation? initialDestinationLocation;
   final bool? initialAccessibleOnly;
+  final SavedJourney? initialSavedJourney;
   final ValueChanged<JourneyOption>? onStartJourney;
 
   @override
@@ -56,6 +60,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   bool _searching = false;
   bool _gettingLocation = false;
   bool _choosingLocation = false;
+  bool _initialSavedJourneyHandled = false;
   String? _loadError;
   double _maximumWalkingDistance = 2000;
   String _routePreference = 'Recommended';
@@ -108,11 +113,17 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       _destinationLocation ??= _locationFromStopName(
         _destinationController.text,
       );
-      final recentSearches = await _storage.getRecentSearches();
-      final savedJourneys = await _storage.getSavedJourneys();
-      final accessibilityPreferences = widget.initialAccessibleOnly == null
-          ? await _storage.getAccessibilityPreferences()
-          : null;
+      final results = await Future.wait<Object?>([
+        _storage.getRecentSearches(),
+        _storage.getSavedJourneys(),
+        if (widget.initialAccessibleOnly == null)
+          _storage.getAccessibilityPreferences()
+        else
+          Future<Object?>.value(),
+      ]);
+      final recentSearches = results[0] as List<RecentSearch>;
+      final savedJourneys = results[1] as List<SavedJourney>;
+      final accessibilityPreferences = results[2] as AccessibilityPreferences?;
       if (!mounted) return;
       setState(() {
         if (accessibilityPreferences != null) {
@@ -122,10 +133,15 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         _savedJourneyIds = savedJourneys.map((item) => item.id).toSet();
         _loading = false;
       });
-    } catch (error) {
+      final initialSavedJourney = widget.initialSavedJourney;
+      if (initialSavedJourney != null && !_initialSavedJourneyHandled) {
+        _initialSavedJourneyHandled = true;
+        await _useSavedJourney(initialSavedJourney, startImmediately: true);
+      }
+    } catch (_) {
       if (!mounted) return;
       setState(() {
-        _loadError = error.toString();
+        _loadError = 'Unable to prepare journey planning. Please try again.';
         _loading = false;
       });
     }
@@ -297,14 +313,16 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
           'GPS selected. Nearest transport stop: ${nearestStop.name}',
         );
       }
-    } catch (error) {
-      if (mounted) _showMessage('Unable to get current location: $error');
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Unable to determine your location. Please try again.');
+      }
     } finally {
       if (mounted) setState(() => _gettingLocation = false);
     }
   }
 
-  Future<void> _findRoutes() async {
+  Future<void> _findRoutes({bool startBestMatch = false}) async {
     if (_searching) return;
     final originText = _originController.text.trim();
     final destinationText = _destinationController.text.trim();
@@ -404,10 +422,16 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
             'The nearest connected stations are beyond your walking limit; showing the closest available routes.',
           );
         }
-        await _showRouteResults();
+        if (startBestMatch) {
+          await _startJourneyOnMap(routes.first);
+        } else {
+          await _showRouteResults();
+        }
       }
-    } catch (error) {
-      if (mounted) _showMessage('Unable to calculate this route: $error');
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Unable to calculate this route. Please try again.');
+      }
     } finally {
       if (mounted) setState(() => _searching = false);
     }
@@ -494,24 +518,31 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   Future<void> _toggleSavedJourney(JourneyOption option) async {
     final isSaved = _savedJourneyIds.contains(option.id);
     JourneyReminderResult? reminderResult;
-    if (isSaved) {
-      await _storage.deleteSavedJourney(option.id);
-      await _notifications.cancelJourney(option.id);
-    } else {
-      await _storage.saveJourney(
-        option,
-        preference: _routePreference,
-        departAt: true,
-        maximumWalkingMetres: _maximumWalkingDistance.round(),
-        accessibleOnly: _accessibleOnly,
-        fewerTransfers: _fewerTransfers,
-      );
-      reminderResult = await _notifications.scheduleJourney(
-        journeyId: option.id,
-        origin: option.origin.name,
-        destination: option.destination.name,
-        departureTime: option.departureTime,
-      );
+    try {
+      if (isSaved) {
+        await _storage.deleteSavedJourney(option.id);
+        await _notifications.cancelJourney(option.id);
+      } else {
+        await _storage.saveJourney(
+          option,
+          preference: _routePreference,
+          departAt: true,
+          maximumWalkingMetres: _maximumWalkingDistance.round(),
+          accessibleOnly: _accessibleOnly,
+          fewerTransfers: _fewerTransfers,
+        );
+        reminderResult = await _notifications.scheduleJourney(
+          journeyId: option.id,
+          origin: option.origin.name,
+          destination: option.destination.name,
+          departureTime: option.departureTime,
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Unable to update this saved plan. Please try again.');
+      }
+      return;
     }
     if (!mounted) return;
     setState(() {
@@ -532,11 +563,35 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     BuildContext bottomSheetContext,
     JourneyOption option,
   ) async {
-    for (final leg in option.legs) {
-      await _storage.recordServiceUse(leg.route);
-    }
+    if (!await _recordJourneyStart(option)) return;
     if (!mounted || !bottomSheetContext.mounted) return;
     Navigator.pop(bottomSheetContext, true);
+  }
+
+  Future<bool> _recordJourneyStart(JourneyOption option) async {
+    try {
+      for (final leg in option.legs) {
+        await _storage.recordServiceUse(leg.route);
+      }
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Unable to start this journey. Please try again.');
+      }
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _startJourneyOnMap(JourneyOption option) async {
+    if (!await _recordJourneyStart(option) || !mounted) return;
+    final openOnMap = widget.onStartJourney;
+    if (openOnMap != null) {
+      openOnMap(option);
+    } else {
+      _showMessage(
+        'Journey started. ${option.routeSummary} was added to frequent services.',
+      );
+    }
   }
 
   Future<void> _openSavedJourneyManager() async {
@@ -554,37 +609,49 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     });
 
     if (selected != null) {
-      final selectedDeparture =
-          selected.departureTime.isBefore(MalaysiaTime.now()) ||
-              !MalaysiaTime.isWithinServiceHours(selected.departureTime)
-          ? MalaysiaTime.nextDeparture()
-          : selected.departureTime;
-      setState(() {
-        _originController.text = selected.origin;
-        _destinationController.text = selected.destination;
-        _originLocation =
-            selected.originLocation ?? _locationFromStopName(selected.origin);
-        _destinationLocation =
-            selected.destinationLocation ??
-            _locationFromStopName(selected.destination);
-        _selectedDate = DateUtils.dateOnly(selectedDeparture);
-        _selectedTime = TimeOfDay.fromDateTime(selectedDeparture);
-        _routePreference = selected.preference == 'Lowest Fee'
-            ? 'Lowest Fee'
-            : selected.preference;
-        _maximumWalkingDistance = selected.maximumWalkingMetres
-            .toDouble()
-            .clamp(200, 10000);
-        _accessibleOnly = selected.accessibleOnly;
-        _fewerTransfers = selected.fewerTransfers;
-        if (selected.modes.isNotEmpty) {
-          _selectedModes
-            ..clear()
-            ..addAll(selected.modes);
-        }
-      });
-      await _findRoutes();
+      await _useSavedJourney(selected, startImmediately: true);
     }
+  }
+
+  Future<void> _useSavedJourney(
+    SavedJourney selected, {
+    required bool startImmediately,
+  }) async {
+    final now = MalaysiaTime.now();
+    final selectedDeparture =
+        selected.departureTime.isBefore(
+              now.subtract(const Duration(minutes: 1)),
+            ) ||
+            !MalaysiaTime.isWithinServiceHours(selected.departureTime)
+        ? MalaysiaTime.nextDeparture()
+        : selected.departureTime;
+    if (!mounted) return;
+    setState(() {
+      _originController.text = selected.origin;
+      _destinationController.text = selected.destination;
+      _originLocation =
+          selected.originLocation ?? _locationFromStopName(selected.origin);
+      _destinationLocation =
+          selected.destinationLocation ??
+          _locationFromStopName(selected.destination);
+      _selectedDate = DateUtils.dateOnly(selectedDeparture);
+      _selectedTime = TimeOfDay.fromDateTime(selectedDeparture);
+      _routePreference = selected.preference == 'Lowest Fee'
+          ? 'Lowest Fee'
+          : selected.preference;
+      _maximumWalkingDistance = selected.maximumWalkingMetres.toDouble().clamp(
+        200,
+        10000,
+      );
+      _accessibleOnly = selected.accessibleOnly;
+      _fewerTransfers = selected.fewerTransfers;
+      if (selected.modes.isNotEmpty) {
+        _selectedModes
+          ..clear()
+          ..addAll(selected.modes);
+      }
+    });
+    await _findRoutes(startBestMatch: startImmediately);
   }
 
   Future<void> _showJourneyDetails(JourneyOption option) async {
@@ -996,7 +1063,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         ),
         const SizedBox(height: 10),
         const Text(
-          'Penang Ferry planning uses the locally bundled official terminal, fee and operating schedule.',
+          'Penang Ferry map geometry comes from the government MyGeoMap service; operating times and fee follow Penang Port Commission.',
           style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
         ),
       ],
@@ -1388,7 +1455,9 @@ Widget _journeyDirectionStep({
 }
 
 class SavedJourneyManagerSheet extends StatefulWidget {
-  const SavedJourneyManagerSheet({super.key});
+  const SavedJourneyManagerSheet({super.key, this.upcomingOnly = false});
+
+  final bool upcomingOnly;
 
   @override
   State<SavedJourneyManagerSheet> createState() =>
@@ -1402,6 +1471,7 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
       JourneyNotificationService.instance;
   List<SavedJourney> _journeys = [];
   bool _loading = true;
+  String? _loadError;
 
   @override
   void initState() {
@@ -1410,13 +1480,38 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
   }
 
   Future<void> _reload() async {
-    await _repository.load();
-    final journeys = await _storage.getSavedJourneys();
-    if (!mounted) return;
-    setState(() {
-      _journeys = journeys;
-      _loading = false;
-    });
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _loadError = null;
+      });
+    }
+    try {
+      await _repository.load();
+      var journeys = await _storage.getSavedJourneys();
+      if (widget.upcomingOnly) {
+        final now = MalaysiaTime.now();
+        journeys =
+            journeys
+                .where((journey) => journey.departureTime.isAfter(now))
+                .toList()
+              ..sort(
+                (first, second) =>
+                    first.departureTime.compareTo(second.departureTime),
+              );
+      }
+      if (!mounted) return;
+      setState(() {
+        _journeys = journeys;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'Unable to load saved plans. Please try again.';
+        _loading = false;
+      });
+    }
   }
 
   Future<void> _editJourney(SavedJourney journey) async {
@@ -1610,8 +1705,11 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
     if (updated == null) return;
     final recalculated = await _recalculateJourney(updated);
     if (recalculated == null) return;
-    await _storage.updateSavedJourney(recalculated);
-    await _scheduleReminder(recalculated);
+    final saved = await _savePlanChange(() async {
+      await _storage.updateSavedJourney(recalculated);
+      await _scheduleReminder(recalculated);
+    });
+    if (!saved) return;
     await _reload();
   }
 
@@ -1629,8 +1727,11 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
     );
     final recalculated = await _recalculateJourney(request);
     if (recalculated == null) return;
-    await _storage.updateSavedJourney(recalculated);
-    await _scheduleReminder(recalculated);
+    final saved = await _savePlanChange(() async {
+      await _storage.updateSavedJourney(recalculated);
+      await _scheduleReminder(recalculated);
+    });
+    if (!saved) return;
     await _reload();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1692,10 +1793,12 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
         accessibleOnly: request.accessibleOnly,
         fewerTransfers: request.fewerTransfers,
       );
-    } catch (error) {
+    } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Unable to refresh this plan: $error')),
+          const SnackBar(
+            content: Text('Unable to refresh this plan. Please try again.'),
+          ),
         );
       }
       return null;
@@ -1723,9 +1826,28 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
       ),
     );
     if (confirmed != true) return;
-    await _storage.deleteSavedJourney(journey.id);
-    await _notifications.cancelJourney(journey.id);
+    final deleted = await _savePlanChange(() async {
+      await _storage.deleteSavedJourney(journey.id);
+      await _notifications.cancelJourney(journey.id);
+    });
+    if (!deleted) return;
     await _reload();
+  }
+
+  Future<bool> _savePlanChange(Future<void> Function() operation) async {
+    try {
+      await operation();
+      return true;
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to update saved plans. Please try again.'),
+          ),
+        );
+      }
+      return false;
+    }
   }
 
   Future<void> _scheduleReminder(SavedJourney journey) async {
@@ -1748,20 +1870,22 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
         height: MediaQuery.of(context).size.height * 0.78,
         child: Column(
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 0, 20, 12),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
               child: Row(
                 children: [
                   Expanded(
                     child: Text(
-                      'Saved Journey Plans',
-                      style: TextStyle(
+                      widget.upcomingOnly
+                          ? 'Upcoming Journeys'
+                          : 'Saved Journey Plans',
+                      style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                   ),
-                  Icon(Icons.swipe_left, color: AppTheme.secondaryText),
+                  const Icon(Icons.swipe_left, color: AppTheme.secondaryText),
                 ],
               ),
             ),
@@ -1769,8 +1893,27 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
+                  : _loadError != null
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.error_outline, size: 44),
+                            const SizedBox(height: 10),
+                            Text(_loadError!, textAlign: TextAlign.center),
+                            const SizedBox(height: 12),
+                            FilledButton(
+                              onPressed: _reload,
+                              child: const Text('Try Again'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
                   : _journeys.isEmpty
-                  ? const _EmptySavedJourneyState()
+                  ? _EmptySavedJourneyState(upcomingOnly: widget.upcomingOnly)
                   : ListView.separated(
                       padding: const EdgeInsets.all(16),
                       itemCount: _journeys.length,
@@ -1824,7 +1967,7 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
                                 Text(
                                   '${journey.routeSummary}  |  '
                                   '${journey.durationMinutes} min  |  '
-                                  '${journey.knownFare == null ? 'Estimated fee RM ${journey.fare.toStringAsFixed(2)}' : 'Fee RM ${journey.knownFare!.toStringAsFixed(2)}'}',
+                                  '${journey.knownFare == null ? 'Fee unavailable' : 'Fee RM ${journey.knownFare!.toStringAsFixed(2)}'}',
                                   style: const TextStyle(
                                     color: AppTheme.secondaryText,
                                   ),
@@ -1859,31 +2002,35 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
 }
 
 class _EmptySavedJourneyState extends StatelessWidget {
-  const _EmptySavedJourneyState();
+  const _EmptySavedJourneyState({required this.upcomingOnly});
+
+  final bool upcomingOnly;
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Padding(
-        padding: EdgeInsets.all(24),
+        padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
+            const Icon(
               Icons.bookmarks_outlined,
               size: 52,
               color: AppTheme.secondaryText,
             ),
-            SizedBox(height: 12),
+            const SizedBox(height: 12),
             Text(
-              'No saved plans yet',
-              style: TextStyle(fontWeight: FontWeight.bold),
+              upcomingOnly ? 'No upcoming journeys' : 'No saved plans yet',
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
-            SizedBox(height: 6),
+            const SizedBox(height: 6),
             Text(
-              'Find a route and tap the bookmark button to save it.',
+              upcomingOnly
+                  ? 'Save a journey with a future departure time to see it here.'
+                  : 'Find a route and tap the bookmark button to save it.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: AppTheme.secondaryText),
+              style: const TextStyle(color: AppTheme.secondaryText),
             ),
           ],
         ),
@@ -1899,6 +2046,38 @@ class JourneyRouteMap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasFerry = option.legs.any((leg) => leg.route.mode == 'Ferry');
+    if (!hasFerry) return _buildMap(const []);
+
+    // The government API is requested only when a user opens a ferry map.
+    return FutureBuilder<List<TransitPoint>>(
+      future: FerryApiService.instance.loadPenangRoute(),
+      builder: (context, snapshot) {
+        final governmentRoute = snapshot.data ?? const <TransitPoint>[];
+        final sourceText = snapshot.hasError
+            ? 'Government ferry map unavailable. Showing the saved terminal route.'
+            : snapshot.hasData
+            ? 'Route geometry: MyGeoMap · Schedule and fee: Penang Port Commission'
+            : 'Loading government ferry route...';
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildMap(governmentRoute),
+            const SizedBox(height: 6),
+            Text(
+              sourceText,
+              style: const TextStyle(
+                color: AppTheme.secondaryText,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildMap(List<TransitPoint> governmentFerryRoute) {
     final allStops = option.legs.expand((leg) => leg.stops).toList();
     final markerStopsById = <String, TransitStop>{};
     for (final leg in option.legs) {
@@ -1963,16 +2142,7 @@ class JourneyRouteMap extends StatelessWidget {
               ),
               for (final leg in option.legs)
                 Polyline(
-                  points: leg.shapePoints.isNotEmpty
-                      ? leg.shapePoints
-                            .map(
-                              (point) =>
-                                  LatLng(point.latitude, point.longitude),
-                            )
-                            .toList()
-                      : leg.stops.map((stop) {
-                          return LatLng(stop.latitude, stop.longitude);
-                        }).toList(),
+                  points: _pointsForLeg(leg, governmentFerryRoute),
                   color: _routeColour(leg.route),
                   strokeWidth: 5,
                 ),
@@ -2050,6 +2220,34 @@ class JourneyRouteMap extends StatelessWidget {
       ),
     );
   }
+
+  List<LatLng> _pointsForLeg(
+    JourneyLeg leg,
+    List<TransitPoint> governmentFerryRoute,
+  ) {
+    if (leg.route.mode == 'Ferry' && governmentFerryRoute.length >= 2) {
+      final route = governmentFerryRoute
+          .map((point) => LatLng(point.latitude, point.longitude))
+          .toList();
+      final firstDistance = _coordinateDistance(route.first, leg.from);
+      final lastDistance = _coordinateDistance(route.last, leg.from);
+      return lastDistance < firstDistance ? route.reversed.toList() : route;
+    }
+    if (leg.shapePoints.isNotEmpty) {
+      return leg.shapePoints
+          .map((point) => LatLng(point.latitude, point.longitude))
+          .toList();
+    }
+    return leg.stops
+        .map((stop) => LatLng(stop.latitude, stop.longitude))
+        .toList();
+  }
+
+  double _coordinateDistance(LatLng point, TransitStop stop) {
+    final latitude = point.latitude - stop.latitude;
+    final longitude = point.longitude - stop.longitude;
+    return latitude * latitude + longitude * longitude;
+  }
 }
 
 String _formatDate(DateTime value) {
@@ -2072,7 +2270,7 @@ String _formatTime(DateTime value) {
 String _feeText(JourneyOption option) {
   final officialFee = option.knownTotalFare;
   if (officialFee == null) {
-    return 'Estimated fee RM ${option.totalFare.toStringAsFixed(2)}';
+    return 'Fee unavailable';
   }
   return 'Fee RM ${officialFee.toStringAsFixed(2)}';
 }

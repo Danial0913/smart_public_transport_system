@@ -252,6 +252,11 @@ Map<String, dynamic> convertFeed(
     optional('calendar_dates.txt'),
   );
   if (sourceId == 'rapid-penang') {
+    // The supplied Rapid Penang GTFS does not contain the ferry. These static
+    // operating details are published by the Penang Port Commission:
+    // https://penangport.gov.my/en/services/service/ferry-services
+    // Runtime route geometry is loaded on demand from the government MyGeoMap
+    // ArcGIS API and falls back to this terminal-to-terminal line when offline.
     _addOfficialPenangFerryConnector(
       routes: routes,
       stops: stops,
@@ -267,7 +272,7 @@ Map<String, dynamic> convertFeed(
       'source': 'Bundled official Malaysia GTFS snapshot',
       'convertedAt': DateTime.now().toIso8601String(),
       'originalFile': originalFile,
-      'fareNotice': 'Fare is unavailable unless the feed has one clear value.',
+      'fareNotice': 'Fee is unavailable unless the feed has one clear value.',
     },
     'stops': usedStops.map((id) => stops[id]!).toList(),
     'routes': routes,
