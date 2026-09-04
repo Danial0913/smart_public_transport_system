@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../data/geocoding_service.dart';
 import '../data/input_validator.dart';
 import '../data/local_storage_service.dart';
 import '../data/location_service.dart';
+import '../data/malaysia_time.dart';
 import '../data/transit_repository.dart';
 import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
@@ -36,6 +39,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _gettingLocation = false;
   bool _choosingLocation = false;
   bool _dashboardRequestInFlight = false;
+  Timer? _clockTimer;
   Key _plannerKey = UniqueKey();
   String? _selectedCategoryId;
   JourneyOption? _activeJourney;
@@ -59,10 +63,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     _fetchDashboardData();
+    _clockTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _clockTimer?.cancel();
     _originController.dispose();
     _destinationController.dispose();
     super.dispose();
@@ -554,9 +562,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _showRouteDetails(TransitRoute route) {
     final stops = _repository.stopsForRoute(route);
-    final fare = route.knownFare == null
-        ? 'Fare unavailable in official GTFS data'
-        : 'Official feed fare: RM ${route.knownFare!.toStringAsFixed(2)}';
+    final fee = route.knownFare == null
+        ? 'Estimated fee: RM ${route.baseFare.toStringAsFixed(2)}'
+        : 'Official fee: RM ${route.knownFare!.toStringAsFixed(2)}';
     final frequency = route.knownFrequencyMinutes == null
         ? 'See scheduled departures in journey planning'
         : 'Published frequency: every ${route.knownFrequencyMinutes} min';
@@ -584,7 +592,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text('${route.mode} · $frequency'),
-                    Text(fare),
+                    Text(fee),
                   ],
                 ),
               ),
@@ -1013,7 +1021,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildUpcomingJourney() {
     SavedJourney? upcoming;
-    final now = DateTime.now();
+    final now = MalaysiaTime.now();
     final futureJourneys = _savedJourneys.where((journey) {
       return journey.departureTime.isAfter(now);
     }).toList();
@@ -1027,7 +1035,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (upcoming == null) {
       return _buildEmptyCard(
         icon: Icons.event_available,
-        message: 'No upcoming journey. Save a future plan from Module 3.',
+        message: 'No upcoming journey. Save a future plan.',
         buttonText: 'Plan Now',
         onPressed: () => _openPlanner(),
       );
@@ -1073,8 +1081,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(width: 16),
                 Text(
                   upcomingJourney.knownFare == null
-                      ? 'Fare unavailable'
-                      : 'RM ${upcomingJourney.knownFare!.toStringAsFixed(2)}',
+                      ? 'Estimated fee RM ${upcomingJourney.fare.toStringAsFixed(2)}'
+                      : 'Fee RM ${upcomingJourney.knownFare!.toStringAsFixed(2)}',
                 ),
                 const Spacer(),
                 TextButton(

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
@@ -27,11 +28,14 @@ class JourneyNotificationService {
   Future<void> _initialise() async {
     tz_data.initializeTimeZones();
     // This application only plans journeys inside Malaysia.
-    tz.setLocalLocation(tz.getLocation('Asia/Kuala_Lumpur'));
+    // Asia/Kuching is the canonical Malaysia (UTC+8) zone included by the
+    // compact timezone database. Asia/Kuala_Lumpur is an IANA alias that is
+    // omitted from that bundled data set.
+    tz.setLocalLocation(tz.getLocation('Asia/Kuching'));
 
     await _notifications.initialize(
       settings: const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        android: AndroidInitializationSettings('ic_stat_transport'),
         iOS: DarwinInitializationSettings(
           requestAlertPermission: false,
           requestBadgePermission: false,
@@ -54,7 +58,9 @@ class JourneyNotificationService {
         destination: destination,
         departureTime: departureTime,
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
+      debugPrint('Unable to schedule journey notification: $error');
+      debugPrintStack(stackTrace: stackTrace);
       return JourneyReminderResult.failed;
     }
   }
@@ -107,9 +113,18 @@ class JourneyNotificationService {
     );
     final notificationId = _notificationId(journeyId);
     final body = '$origin to $destination is ready to start.';
-    final now = DateTime.now();
+    final scheduledDeparture = tz.TZDateTime(
+      tz.local,
+      departureTime.year,
+      departureTime.month,
+      departureTime.day,
+      departureTime.hour,
+      departureTime.minute,
+      departureTime.second,
+    );
+    final now = tz.TZDateTime.now(tz.local);
 
-    if (!departureTime.isAfter(now.add(const Duration(seconds: 5)))) {
+    if (!scheduledDeparture.isAfter(now.add(const Duration(seconds: 5)))) {
       await _notifications.show(
         id: notificationId,
         title: 'Your planned journey starts now',
@@ -126,7 +141,7 @@ class JourneyNotificationService {
       id: notificationId,
       title: 'Your planned journey starts now',
       body: body,
-      scheduledDate: tz.TZDateTime.from(departureTime, tz.local),
+      scheduledDate: scheduledDeparture,
       notificationDetails: details,
       androidScheduleMode: exactAlarmAllowed
           ? AndroidScheduleMode.exactAllowWhileIdle

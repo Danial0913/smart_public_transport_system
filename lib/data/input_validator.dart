@@ -1,5 +1,6 @@
 import '../models/transit_models.dart';
 import 'location_service.dart';
+import 'malaysia_time.dart';
 
 class InputValidator {
   static String? categoryName(
@@ -69,8 +70,11 @@ class InputValidator {
     if (maximumWalkingMetres < 100 || maximumWalkingMetres > 10000) {
       return 'Walking distance must be between 100 m and 10 km.';
     }
+    if (!MalaysiaTime.isWithinServiceHours(requestedTime)) {
+      return 'Choose a departure time between 5:00 AM and 11:59 PM.';
+    }
     if (requestedTime.isBefore(
-      DateTime.now().subtract(const Duration(minutes: 1)),
+      MalaysiaTime.now().subtract(const Duration(minutes: 1)),
     )) {
       return 'Travel date and time cannot be in the past.';
     }

@@ -620,7 +620,20 @@ class TransitRepository {
       }
     }
 
-    options.sort((a, b) {
+    // Nearby boarding platforms can produce several cards with the same
+    // visible service sequence. Show that route combination once and retain
+    // the access path with the shortest total walk.
+    final uniqueOptions = <String, JourneyOption>{};
+    for (final option in options) {
+      final key = _journeyRouteKey(option);
+      final current = uniqueOptions[key];
+      if (current == null || _preferForDuplicate(option, current)) {
+        uniqueOptions[key] = option;
+      }
+    }
+    final rankedOptions = uniqueOptions.values.toList();
+
+    rankedOptions.sort((a, b) {
       if (fewerTransfers && a.transferCount != b.transferCount) {
         return a.transferCount.compareTo(b.transferCount);
       }
@@ -633,7 +646,8 @@ class TransitRepository {
           return durationResult != 0
               ? durationResult
               : a.totalFare.compareTo(b.totalFare);
-        case 'Lowest Fare':
+        case 'Lowest Fee':
+        case 'Lowest Fare': // Backwards compatibility for existing saved plans.
           if (a.knownTotalFare == null && b.knownTotalFare != null) return 1;
           if (a.knownTotalFare != null && b.knownTotalFare == null) return -1;
           final fareResult = (a.knownTotalFare ?? double.infinity).compareTo(
@@ -652,7 +666,26 @@ class TransitRepository {
       }
     });
 
-    return options.take(6).toList();
+    return rankedOptions.take(6).toList();
+  }
+
+  String _journeyRouteKey(JourneyOption option) {
+    return option.legs
+        .map(
+          (leg) =>
+              '${_normalise(leg.route.mode)}:${_normalise(leg.route.number)}',
+        )
+        .join('>');
+  }
+
+  bool _preferForDuplicate(JourneyOption candidate, JourneyOption current) {
+    if (candidate.walkingMetres != current.walkingMetres) {
+      return candidate.walkingMetres < current.walkingMetres;
+    }
+    if (candidate.totalDurationMinutes != current.totalDurationMinutes) {
+      return candidate.totalDurationMinutes < current.totalDurationMinutes;
+    }
+    return candidate.departureTime.isBefore(current.departureTime);
   }
 
   List<_TransferPair> _transferPairs(

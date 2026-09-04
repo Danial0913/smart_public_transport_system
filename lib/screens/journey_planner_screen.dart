@@ -7,6 +7,7 @@ import '../data/input_validator.dart';
 import '../data/journey_notification_service.dart';
 import '../data/local_storage_service.dart';
 import '../data/location_service.dart';
+import '../data/malaysia_time.dart';
 import '../data/transit_repository.dart';
 import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
@@ -49,7 +50,6 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
 
   late DateTime _selectedDate;
   late TimeOfDay _selectedTime;
-  bool _departAt = true;
   late bool _accessibleOnly;
   bool _fewerTransfers = false;
   bool _loading = true;
@@ -74,7 +74,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   @override
   void initState() {
     super.initState();
-    final initialDeparture = DateTime.now().add(const Duration(minutes: 5));
+    final initialDeparture = MalaysiaTime.defaultDeparture();
     _selectedDate = DateUtils.dateOnly(initialDeparture);
     _selectedTime = TimeOfDay.fromDateTime(initialDeparture);
     _originController = TextEditingController(text: widget.initialOrigin);
@@ -149,7 +149,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   }
 
   Future<void> _selectDate() async {
-    final today = DateUtils.dateOnly(DateTime.now());
+    final today = DateUtils.dateOnly(MalaysiaTime.now());
     final currentSelection = DateUtils.dateOnly(_selectedDate);
     final selected = await showDatePicker(
       context: context,
@@ -158,7 +158,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       lastDate: today.add(const Duration(days: 365)),
     );
     if (selected == null || !mounted) return;
-    final now = DateTime.now();
+    final now = MalaysiaTime.now();
     final selectedDateTime = DateTime(
       selected.year,
       selected.month,
@@ -169,7 +169,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     setState(() {
       _selectedDate = selected;
       if (selectedDateTime.isBefore(now)) {
-        final nextAvailable = now.add(const Duration(minutes: 5));
+        final nextAvailable = MalaysiaTime.nextDeparture();
         _selectedDate = DateUtils.dateOnly(nextAvailable);
         _selectedTime = TimeOfDay.fromDateTime(nextAvailable);
       }
@@ -189,10 +189,14 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       selected.hour,
       selected.minute,
     );
+    if (!MalaysiaTime.isWithinServiceHours(candidate)) {
+      _showMessage('Choose a departure time between 5:00 AM and 11:59 PM.');
+      return;
+    }
     if (candidate.isBefore(
-      DateTime.now().subtract(const Duration(minutes: 1)),
+      MalaysiaTime.now().subtract(const Duration(minutes: 1)),
     )) {
-      final nextAvailable = DateTime.now().add(const Duration(minutes: 5));
+      final nextAvailable = MalaysiaTime.nextDeparture();
       setState(() {
         _selectedDate = DateUtils.dateOnly(nextAvailable);
         _selectedTime = TimeOfDay.fromDateTime(nextAvailable);
@@ -275,7 +279,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       if (!mounted) return;
       final gpsLocation = JourneyLocation(
         name:
-        placeName ??
+            placeName ??
             (nearestStop == null
                 ? 'Current location'
                 : 'Near ${nearestStop.name}'),
@@ -348,7 +352,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         origin: selectedOrigin,
         destination: selectedDestination,
         requestedTime: requestedTime,
-        departAt: _departAt,
+        departAt: true,
         selectedModes: _selectedModes,
         accessibleOnly: _accessibleOnly,
         fewerTransfers: _fewerTransfers,
@@ -361,7 +365,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
           origin: selectedOrigin,
           destination: selectedDestination,
           requestedTime: requestedTime,
-          departAt: _departAt,
+          departAt: true,
           selectedModes: _selectedModes,
           accessibleOnly: _accessibleOnly,
           fewerTransfers: _fewerTransfers,
@@ -443,7 +447,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
                               const SizedBox(height: 4),
                               Text(
                                 '${_originController.text} to '
-                                    '${_destinationController.text}',
+                                '${_destinationController.text}',
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -497,7 +501,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       await _storage.saveJourney(
         option,
         preference: _routePreference,
-        departAt: _departAt,
+        departAt: true,
         maximumWalkingMetres: _maximumWalkingDistance.round(),
         accessibleOnly: _accessibleOnly,
         fewerTransfers: _fewerTransfers,
@@ -525,9 +529,9 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   }
 
   Future<void> _startJourney(
-      BuildContext bottomSheetContext,
-      JourneyOption option,
-      ) async {
+    BuildContext bottomSheetContext,
+    JourneyOption option,
+  ) async {
     for (final leg in option.legs) {
       await _storage.recordServiceUse(leg.route);
     }
@@ -550,8 +554,10 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     });
 
     if (selected != null) {
-      final selectedDeparture = selected.departureTime.isBefore(DateTime.now())
-          ? DateTime.now().add(const Duration(minutes: 5))
+      final selectedDeparture =
+          selected.departureTime.isBefore(MalaysiaTime.now()) ||
+              !MalaysiaTime.isWithinServiceHours(selected.departureTime)
+          ? MalaysiaTime.nextDeparture()
           : selected.departureTime;
       setState(() {
         _originController.text = selected.origin;
@@ -560,11 +566,12 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
             selected.originLocation ?? _locationFromStopName(selected.origin);
         _destinationLocation =
             selected.destinationLocation ??
-                _locationFromStopName(selected.destination);
+            _locationFromStopName(selected.destination);
         _selectedDate = DateUtils.dateOnly(selectedDeparture);
         _selectedTime = TimeOfDay.fromDateTime(selectedDeparture);
-        _routePreference = selected.preference;
-        _departAt = selected.departAt;
+        _routePreference = selected.preference == 'Lowest Fee'
+            ? 'Lowest Fee'
+            : selected.preference;
         _maximumWalkingDistance = selected.maximumWalkingMetres
             .toDouble()
             .clamp(200, 10000);
@@ -668,13 +675,13 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
             onPressed: _searching ? null : _findRoutes,
             icon: _searching
                 ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.white,
-              ),
-            )
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
                 : const Icon(Icons.search),
             label: Text(_searching ? 'Finding Routes...' : 'Find Routes'),
           ),
@@ -747,10 +754,10 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
                   tooltip: 'Use current GPS location',
                   icon: _gettingLocation
                       ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
                       : const Icon(Icons.my_location),
                 ),
                 IconButton(
@@ -836,16 +843,19 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
                 onPressed: () {
                   final originLocation =
                       search.originLocation ??
-                          _locationFromStopName(search.origin);
+                      _locationFromStopName(search.origin);
                   final destinationLocation =
                       search.destinationLocation ??
-                          _locationFromStopName(search.destination);
-                  final now = DateTime.now();
+                      _locationFromStopName(search.destination);
+                  final now = MalaysiaTime.now();
                   final requested =
-                  search.requestedTime != null &&
-                      search.requestedTime!.isAfter(now)
+                      search.requestedTime != null &&
+                          search.requestedTime!.isAfter(now) &&
+                          MalaysiaTime.isWithinServiceHours(
+                            search.requestedTime!,
+                          )
                       ? search.requestedTime!
-                      : now.add(const Duration(minutes: 5));
+                      : MalaysiaTime.nextDeparture();
                   setState(() {
                     _originController.text = search.origin;
                     _destinationController.text = search.destination;
@@ -854,7 +864,9 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
                     _selectedDate = requested;
                     _selectedTime = TimeOfDay.fromDateTime(requested);
                     if (search.preference != null) {
-                      _routePreference = search.preference!;
+                      _routePreference = search.preference == 'Lowest Fee'
+                          ? 'Lowest Fee'
+                          : search.preference!;
                     }
                   });
                   _findRoutes();
@@ -883,30 +895,12 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   Widget _buildJourneyTimeSection() {
     return Column(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: ChoiceChip(
-                label: const SizedBox(
-                  width: double.infinity,
-                  child: Text('Depart At', textAlign: TextAlign.center),
-                ),
-                selected: _departAt,
-                onSelected: (_) => setState(() => _departAt = true),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: ChoiceChip(
-                label: const SizedBox(
-                  width: double.infinity,
-                  child: Text('Arrive By', textAlign: TextAlign.center),
-                ),
-                selected: !_departAt,
-                onSelected: (_) => setState(() => _departAt = false),
-              ),
-            ),
-          ],
+        const Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Select departure date and time',
+            style: TextStyle(color: AppTheme.secondaryText),
+          ),
         ),
         const SizedBox(height: 12),
         Row(
@@ -1002,7 +996,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         ),
         const SizedBox(height: 10),
         const Text(
-          'Penang Ferry planning uses the locally bundled official terminal, fare and operating schedule.',
+          'Penang Ferry planning uses the locally bundled official terminal, fee and operating schedule.',
           style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
         ),
       ],
@@ -1013,7 +1007,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
     const preferences = [
       'Recommended',
       'Fastest',
-      'Lowest Fare',
+      'Lowest Fee',
       'Less Walking',
     ];
 
@@ -1100,10 +1094,10 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   }
 
   Widget _buildRouteOptionCard(
-      JourneyOption option, {
-        required bool recommended,
-        VoidCallback? onSavedChanged,
-      }) {
+    JourneyOption option, {
+    required bool recommended,
+    VoidCallback? onSavedChanged,
+  }) {
     final isSaved = _savedJourneyIds.contains(option.id);
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1156,7 +1150,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
           const SizedBox(height: 4),
           Text(
             'Depart ${_formatTime(option.departureTime)}  |  '
-                'Arrive ${_formatTime(option.arrivalTime)}',
+            'Arrive ${_formatTime(option.arrivalTime)}',
             style: const TextStyle(color: AppTheme.secondaryText),
           ),
           if (!option.usesOfficialSchedule) ...[
@@ -1179,7 +1173,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
                 Icons.schedule,
                 '${option.totalDurationMinutes} min',
               ),
-              _buildMetric(Icons.payments_outlined, _fareText(option)),
+              _buildMetric(Icons.payments_outlined, _feeText(option)),
               _buildMetric(Icons.directions_walk, '${option.walkingMetres} m'),
               _buildMetric(
                 Icons.sync_alt,
@@ -1291,8 +1285,8 @@ class _JourneyDetailsSheetState extends State<_JourneyDetailsSheet> {
             const SizedBox(height: 4),
             Text(
               '${_formatTime(option.departureTime)} - '
-                  '${_formatTime(option.arrivalTime)}  |  '
-                  '${option.totalDurationMinutes} min  |  ${_fareText(option)}',
+              '${_formatTime(option.arrivalTime)}  |  '
+              '${option.totalDurationMinutes} min  |  ${_feeText(option)}',
               style: const TextStyle(color: AppTheme.secondaryText),
             ),
             const SizedBox(height: 4),
@@ -1440,10 +1434,13 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
     if (destinationLocation == null && oldDestinationStop != null) {
       destinationLocation = JourneyLocation.fromStop(oldDestinationStop);
     }
-    final now = DateTime.now();
+    final now = MalaysiaTime.now();
     DateTime departure = journey.departureTime.isBefore(now)
-        ? now.add(const Duration(minutes: 5))
+        ? MalaysiaTime.nextDeparture()
         : journey.departureTime;
+    if (!MalaysiaTime.isWithinServiceHours(departure)) {
+      departure = MalaysiaTime.nextDeparture();
+    }
 
     final updated = await showDialog<SavedJourney>(
       context: context,
@@ -1522,9 +1519,9 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
                           final date = await showDatePicker(
                             context: dialogContext,
                             initialDate: DateUtils.dateOnly(departure),
-                            firstDate: DateUtils.dateOnly(DateTime.now()),
+                            firstDate: DateUtils.dateOnly(MalaysiaTime.now()),
                             lastDate: DateUtils.dateOnly(
-                              DateTime.now(),
+                              MalaysiaTime.now(),
                             ).add(const Duration(days: 365)),
                           );
                           if (date == null || !dialogContext.mounted) return;
@@ -1533,14 +1530,27 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
                             initialTime: TimeOfDay.fromDateTime(departure),
                           );
                           if (time == null) return;
+                          final candidate = DateTime(
+                            date.year,
+                            date.month,
+                            date.day,
+                            time.hour,
+                            time.minute,
+                          );
+                          if (!MalaysiaTime.isWithinServiceHours(candidate)) {
+                            if (dialogContext.mounted) {
+                              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Choose a departure time between 5:00 AM and 11:59 PM.',
+                                  ),
+                                ),
+                              );
+                            }
+                            return;
+                          }
                           setDialogState(() {
-                            departure = DateTime(
-                              date.year,
-                              date.month,
-                              date.day,
-                              time.hour,
-                              time.minute,
-                            );
+                            departure = candidate;
                           });
                         },
                       ),
@@ -1607,13 +1617,15 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
 
   Future<void> _duplicateJourney(SavedJourney journey) async {
     final tomorrow = journey.departureTime.add(const Duration(days: 1));
-    final duplicatedDeparture = tomorrow.isBefore(DateTime.now())
-        ? DateTime.now().add(const Duration(minutes: 5))
+    final duplicatedDeparture =
+        tomorrow.isBefore(MalaysiaTime.now()) ||
+            !MalaysiaTime.isWithinServiceHours(tomorrow)
+        ? MalaysiaTime.nextDeparture()
         : tomorrow;
     final request = journey.copyWith(
-      id: '${journey.id}-copy-${DateTime.now().microsecondsSinceEpoch}',
+      id: '${journey.id}-copy-${MalaysiaTime.now().microsecondsSinceEpoch}',
       departureTime: duplicatedDeparture,
-      savedAt: DateTime.now(),
+      savedAt: MalaysiaTime.now(),
     );
     final recalculated = await _recalculateJourney(request);
     if (recalculated == null) return;
@@ -1653,7 +1665,7 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
         origin: origin,
         destination: destination,
         requestedTime: request.departureTime,
-        departAt: request.departAt,
+        departAt: true,
         selectedModes: modes,
         accessibleOnly: request.accessibleOnly,
         fewerTransfers: request.fewerTransfers,
@@ -1675,7 +1687,7 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
         id: request.id,
         savedAt: request.savedAt,
         preference: request.preference,
-        departAt: request.departAt,
+        departAt: true,
         maximumWalkingMetres: request.maximumWalkingMetres,
         accessibleOnly: request.accessibleOnly,
         fewerTransfers: request.fewerTransfers,
@@ -1760,84 +1772,84 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
                   : _journeys.isEmpty
                   ? const _EmptySavedJourneyState()
                   : ListView.separated(
-                padding: const EdgeInsets.all(16),
-                itemCount: _journeys.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 12),
-                itemBuilder: (context, index) {
-                  final journey = _journeys[index];
-                  return Card(
-                    margin: EdgeInsets.zero,
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  '${journey.origin} -> ${journey.destination}',
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _journeys.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final journey = _journeys[index];
+                        return Card(
+                          margin: EdgeInsets.zero,
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        '${journey.origin} -> ${journey.destination}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                    PopupMenuButton<String>(
+                                      onSelected: (value) {
+                                        if (value == 'edit') {
+                                          _editJourney(journey);
+                                        } else if (value == 'duplicate') {
+                                          _duplicateJourney(journey);
+                                        } else if (value == 'delete') {
+                                          _deleteJourney(journey);
+                                        }
+                                      },
+                                      itemBuilder: (_) => const [
+                                        PopupMenuItem(
+                                          value: 'edit',
+                                          child: Text('Edit'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'duplicate',
+                                          child: Text('Duplicate'),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'delete',
+                                          child: Text('Delete'),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                Text(
+                                  '${journey.routeSummary}  |  '
+                                  '${journey.durationMinutes} min  |  '
+                                  '${journey.knownFare == null ? 'Estimated fee RM ${journey.fare.toStringAsFixed(2)}' : 'Fee RM ${journey.knownFare!.toStringAsFixed(2)}'}',
                                   style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
+                                    color: AppTheme.secondaryText,
                                   ),
                                 ),
-                              ),
-                              PopupMenuButton<String>(
-                                onSelected: (value) {
-                                  if (value == 'edit') {
-                                    _editJourney(journey);
-                                  } else if (value == 'duplicate') {
-                                    _duplicateJourney(journey);
-                                  } else if (value == 'delete') {
-                                    _deleteJourney(journey);
-                                  }
-                                },
-                                itemBuilder: (_) => const [
-                                  PopupMenuItem(
-                                    value: 'edit',
-                                    child: Text('Edit'),
+                                const SizedBox(height: 6),
+                                Text(
+                                  '${_formatDate(journey.departureTime)} at '
+                                  '${_formatTime(journey.departureTime)}',
+                                ),
+                                const SizedBox(height: 10),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: TextButton.icon(
+                                    onPressed: () =>
+                                        Navigator.pop(context, journey),
+                                    icon: const Icon(Icons.route),
+                                    label: const Text('Use This Plan'),
                                   ),
-                                  PopupMenuItem(
-                                    value: 'duplicate',
-                                    child: Text('Duplicate'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'delete',
-                                    child: Text('Delete'),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                          Text(
-                            '${journey.routeSummary}  |  '
-                                '${journey.durationMinutes} min  |  '
-                                '${journey.knownFare == null ? 'Fare unavailable' : 'RM ${journey.knownFare!.toStringAsFixed(2)}'}',
-                            style: const TextStyle(
-                              color: AppTheme.secondaryText,
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '${_formatDate(journey.departureTime)} at '
-                                '${_formatTime(journey.departureTime)}',
-                          ),
-                          const SizedBox(height: 10),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton.icon(
-                              onPressed: () =>
-                                  Navigator.pop(context, journey),
-                              icon: const Icon(Icons.route),
-                              label: const Text('Use This Plan'),
-                            ),
-                          ),
-                        ],
-                      ),
+                        );
+                      },
                     ),
-                  );
-                },
-              ),
             ),
           ],
         ),
@@ -1953,14 +1965,14 @@ class JourneyRouteMap extends StatelessWidget {
                 Polyline(
                   points: leg.shapePoints.isNotEmpty
                       ? leg.shapePoints
-                      .map(
-                        (point) =>
-                        LatLng(point.latitude, point.longitude),
-                  )
-                      .toList()
+                            .map(
+                              (point) =>
+                                  LatLng(point.latitude, point.longitude),
+                            )
+                            .toList()
                       : leg.stops.map((stop) {
-                    return LatLng(stop.latitude, stop.longitude);
-                  }).toList(),
+                          return LatLng(stop.latitude, stop.longitude);
+                        }).toList(),
                   color: _routeColour(leg.route),
                   strokeWidth: 5,
                 ),
@@ -2057,14 +2069,12 @@ String _formatTime(DateTime value) {
   return '$hour:$minute $period';
 }
 
-String _fareText(JourneyOption option) {
-  final fare = option.knownTotalFare;
-  if (fare == null) {
-    return option.farePartiallyKnown
-        ? 'Fare partially unavailable'
-        : 'Fare unavailable';
+String _feeText(JourneyOption option) {
+  final officialFee = option.knownTotalFare;
+  if (officialFee == null) {
+    return 'Estimated fee RM ${option.totalFare.toStringAsFixed(2)}';
   }
-  return 'RM ${fare.toStringAsFixed(2)}';
+  return 'Fee RM ${officialFee.toStringAsFixed(2)}';
 }
 
 IconData _modeIcon(String mode) {
@@ -2113,14 +2123,14 @@ Color _routeColour(TransitRoute route) {
 String _savedReminderMessage(JourneyReminderResult result) {
   return switch (result) {
     JourneyReminderResult.scheduledExact =>
-    'Journey plan saved. A reminder will appear at departure time.',
+      'Journey plan saved. A reminder will appear at departure time.',
     JourneyReminderResult.scheduledInexact =>
-    'Journey plan saved. Enable exact alarms for an exact-time reminder.',
+      'Journey plan saved. Enable exact alarms for an exact-time reminder.',
     JourneyReminderResult.shownNow =>
-    'Journey plan saved. The journey starts now.',
+      'Journey plan saved. The journey starts now.',
     JourneyReminderResult.permissionDenied =>
-    'Journey plan saved, but notification permission was not granted.',
+      'Journey plan saved, but notification permission was not granted.',
     JourneyReminderResult.failed =>
-    'Journey plan saved, but its departure reminder could not be scheduled.',
+      'Journey plan saved, but its departure reminder could not be scheduled.',
   };
 }
