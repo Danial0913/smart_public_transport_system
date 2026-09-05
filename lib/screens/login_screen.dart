@@ -56,6 +56,12 @@ class _LoginScreenState extends State<LoginScreen> {
     return null;
   }
 
+  void _showMessage(String message) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.removeCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -84,9 +90,7 @@ class _LoginScreenState extends State<LoginScreen> {
           _loggingIn = false;
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Incorrect email address or password.')),
-        );
+        _showMessage('Incorrect email address or password.');
 
         return;
       }
@@ -108,9 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() {
         _loggingIn = false;
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
+      _showMessage(error.message);
     } catch (error) {
       if (!mounted) {
         return;
@@ -120,9 +122,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _loggingIn = false;
       });
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Unable to log in: $error')));
+      _showMessage('Unable to log in: $error');
     }
   }
 
@@ -143,11 +143,7 @@ class _LoginScreenState extends State<LoginScreen> {
     _emailCtrl.text = registeredEmail;
     _passwordCtrl.clear();
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Account created. Enter your password to log in.'),
-      ),
-    );
+    _showMessage('Account created. Enter your password to log in.');
   }
 
   void _openForgotPasswordScreen() {
