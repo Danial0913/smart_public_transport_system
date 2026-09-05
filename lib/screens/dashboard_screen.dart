@@ -785,7 +785,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final stops = _repository.stopsForRoute(route);
     final fee = route.knownFare == null
         ? 'Fee unavailable'
-        : 'Official fee: RM ${route.knownFare!.toStringAsFixed(2)}';
+        : 'Adult cash fee: RM ${route.knownFare!.toStringAsFixed(2)}';
     final frequency = route.knownFrequencyMinutes == null
         ? 'See scheduled departures in journey planning'
         : 'Published frequency: every ${route.knownFrequencyMinutes} min';
@@ -1331,7 +1331,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Text(
                   upcomingJourney.knownFare == null
                       ? 'Fee unavailable'
-                      : 'Fee RM ${upcomingJourney.knownFare!.toStringAsFixed(2)}',
+                      : 'Adult cash RM ${upcomingJourney.knownFare!.toStringAsFixed(2)}',
                 ),
                 const Spacer(),
                 TextButton(

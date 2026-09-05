@@ -371,7 +371,6 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
 
     setState(() => _searching = true);
 
-    // Allow Flutter to draw the loading indicator before route calculation.
     await Future<void>.delayed(Duration.zero);
 
     try {
@@ -663,7 +662,6 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
 
     if (started != true || !mounted) return;
 
-    // Close the route-options popup underneath the journey-details popup.
     Navigator.pop(context);
     final openOnMap = widget.onStartJourney;
     if (openOnMap != null) {
@@ -1979,7 +1977,7 @@ class _SavedJourneyManagerSheetState extends State<SavedJourneyManagerSheet> {
                                 Text(
                                   '${journey.routeSummary}  |  '
                                   '${journey.durationMinutes} min  |  '
-                                  '${journey.knownFare == null ? 'Fee unavailable' : 'Fee RM ${journey.knownFare!.toStringAsFixed(2)}'}',
+                                  '${journey.knownFare == null ? 'Fee unavailable' : 'Adult cash RM ${journey.knownFare!.toStringAsFixed(2)}'}',
                                   style: const TextStyle(
                                     color: AppTheme.secondaryText,
                                   ),
@@ -2061,7 +2059,6 @@ class JourneyRouteMap extends StatelessWidget {
     final hasFerry = option.legs.any((leg) => leg.route.mode == 'Ferry');
     if (!hasFerry) return _buildMap(const []);
 
-    // The government API is requested only when a user opens a ferry map.
     return FutureBuilder<List<TransitPoint>>(
       future: FerryApiService.instance.loadPenangRoute(),
       builder: (context, snapshot) {
@@ -2282,8 +2279,8 @@ String _formatTime(DateTime value) {
 String _feeText(JourneyOption option) {
   final officialFee = option.knownTotalFare;
   if (officialFee != null) {
-    return 'Fee RM ${officialFee.toStringAsFixed(2)}';
-  }
+  return 'Adult cash RM ${officialFee.toStringAsFixed(2)}';
+}
   final canEstimateFare = option.legs.every((leg) {
     return leg.knownFare != null ||
         (leg.route.sourceId == 'rapid-penang' &&

@@ -21,6 +21,7 @@ class TransitRepository {
   final Map<String, List<TransitStop>> _stopsByGridCell = {};
   final Map<String, List<TransitStop>> _stopsByTransferGridCell = {};
   final Map<String, List<TransitStop>> _stopsByDedupGridCell = {};
+  final Map<String, double> _adultCashFaresByStopPair = {};
   final List<TransitRoute> _routes = [];
   final Set<String> _loadedSourceIds = {};
 
@@ -50,6 +51,7 @@ class TransitRepository {
     _stopsByGridCell.clear();
     _stopsByTransferGridCell.clear();
     _stopsByDedupGridCell.clear();
+    _adultCashFaresByStopPair.clear();
     _routes.clear();
     _loadedSourceIds.clear();
 
@@ -172,6 +174,27 @@ class TransitRepository {
             .add(stop);
       }
       if (index > 0 && index % 200 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    final sourceId =
+        (data['metadata'] as Map<String, dynamic>?)?['sourceId'] as String? ??
+        '';
+    final adultCashFares =
+        data['adultCashFares'] as Map<String, dynamic>? ?? const {};
+    var processedFare = 0;
+    for (final entry in adultCashFares.entries) {
+      final ids = entry.key.split('\u001f');
+      if (ids.length != 2) continue;
+      final from = aliases[ids[0]];
+      final to = aliases[ids[1]];
+      final amount = entry.value;
+      if (from == null || to == null || amount is! num) continue;
+      _adultCashFaresByStopPair[_fareLookupKey(sourceId, from, to)] =
+          amount.toDouble();
+      processedFare++;
+      if (processedFare % 1000 == 0) {
         await Future<void>.delayed(Duration.zero);
       }
     }
@@ -1330,10 +1353,14 @@ class TransitRepository {
       legStops,
     );
 
-    final fare =
-        calculatedFare ??
-            route.knownFare ??
-            route.baseFare;
+    final officialAdultCashFare =
+        route.knownFare ??
+        _adultCashFaresByStopPair[_fareLookupKey(
+          route.sourceId,
+          from.id,
+          to.id,
+        )];
+    final fare = calculatedFare ?? officialAdultCashFare ?? route.baseFare;
 
     return JourneyLeg(
       route: route,
@@ -1344,10 +1371,13 @@ class TransitRepository {
       math.max(1, legStops.length - 1) *
           route.minutesPerStop,
       fare: fare,
-      knownFare: _isFreeRapidPenangRoute(route)
-          ? fare
-          : route.knownFare,
+      knownFare: officialAdultCashFare ??
+          (_isFreeRapidPenangRoute(route) ? fare : null),
     );
+  }
+
+  String _fareLookupKey(String sourceId, String fromStopId, String toStopId) {
+    return '$sourceId\u001e$fromStopId\u001f$toStopId';
   }
 
   List<_StopCandidate> _nearbyStops(
