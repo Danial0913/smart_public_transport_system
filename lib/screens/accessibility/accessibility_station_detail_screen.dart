@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../data/accessibility_service.dart';
-import '../../data/local_storage_service.dart';
+import '../../data/official_accessibility_catalog.dart';
 import '../../models/accessibility_models.dart';
 import '../../models/transit_models.dart';
 import '../../theme/app_theme.dart';
 import '../journey_planner_screen.dart';
-import 'accessibility_report_screen.dart';
 import 'accessibility_ui.dart';
 
 class AccessibilityStationDetailScreen extends StatefulWidget {
@@ -21,10 +20,9 @@ class AccessibilityStationDetailScreen extends StatefulWidget {
 
 class _AccessibilityStationDetailScreenState
     extends State<AccessibilityStationDetailScreen> {
-  final _storage = LocalStorageService.instance;
   final _service = AccessibilityService.instance;
   late StationAccessibility _station;
-  List<AccessibilityObservation> _observations = [];
+  String? _error;
 
   @override
   void initState() {
@@ -34,27 +32,18 @@ class _AccessibilityStationDetailScreenState
   }
 
   Future<void> _refresh() async {
-    final observations = await _storage.getAccessibilityObservations(
-      stopId: _station.stop.id,
-    );
-    if (!mounted) return;
-    setState(() {
-      _observations = observations;
-      _station = _service.profileForStop(_station.stop, observations);
-    });
-  }
-
-  Future<void> _report() async {
-    final changed = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => AccessibilityReportScreen(
-          stopId: _station.stop.id,
-          stopName: _station.stop.name,
-        ),
-      ),
-    );
-    if (changed == true) await _refresh();
+    try {
+      await OfficialAccessibilityCatalog.instance.load();
+      if (!mounted) return;
+      setState(() {
+        _error = null;
+        _station = _service.profileForStop(_station.stop, const []);
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'Could not load official facility records.');
+      }
+    }
   }
 
   void _planJourney() {
@@ -82,6 +71,7 @@ class _AccessibilityStationDetailScreenState
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
           children: [
             Container(
@@ -111,9 +101,7 @@ class _AccessibilityStationDetailScreenState
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    _station.hasVerifiedAccessibility
-                        ? 'GTFS marks this stop as wheelchair boardable.'
-                        : 'No wheelchair boarding confirmation in the GTFS snapshot.',
+                    '${_station.availableFacilities.length} officially available facilities',
                     style: const TextStyle(color: Colors.white70),
                   ),
                 ],
@@ -121,64 +109,62 @@ class _AccessibilityStationDetailScreenState
             ),
             const SizedBox(height: 18),
             const Text(
-              'Facilities',
+              'Available Facilities',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            ...AccessibilityFacility.values.map(_facilityCard),
+            ..._station.availableFacilities.map(_facilityCard),
+            if (!_station.hasAvailableFacilities)
+              const Text('No officially available facilities for this stop.'),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _report,
-                    icon: const Icon(Icons.rate_review_outlined),
-                    label: const Text('Report Status'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _planJourney,
-                    icon: const Icon(Icons.route_outlined),
-                    label: const Text('Plan Journey'),
-                  ),
-                ),
-              ],
+            FilledButton.icon(
+              onPressed: _planJourney,
+              icon: const Icon(Icons.route_outlined),
+              label: const Text('Plan Journey'),
             ),
-            const SizedBox(height: 22),
-            Text(
-              'Recent observations (${_observations.length})',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            const SizedBox(height: 18),
+            if (_error != null)
+              ListTile(
+                title: Text(_error!),
+                trailing: TextButton(
+                  onPressed: _refresh,
+                  child: const Text('Try Again'),
+                ),
+              ),
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'Only facilities documented as available are shown. Facility presence does not confirm current operation or a complete step-free route.',
+                ),
+              ),
             ),
-            const SizedBox(height: 8),
-            if (_observations.isEmpty)
-              const Card(
+            if (_station.officialFacilities != null)
+              Card(
                 child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text(
-                    'No local observations yet. Facility statuses marked “Not reported” are unknown, not unavailable.',
-                  ),
-                ),
-              )
-            else
-              ..._observations.map(
-                (observation) => Card(
-                  child: ListTile(
-                    leading: Icon(
-                      observation.status.icon,
-                      color: observation.status.colour,
-                    ),
-                    title: Text(
-                      '${observation.facility.label}: ${observation.status.label}',
-                    ),
-                    subtitle: Text(
-                      '${observation.note}\n${accessibilityTimeLabel(observation.createdAt)}',
-                    ),
-                    isThreeLine: true,
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Source: ${_station.officialFacilities!.sourceName}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        'Checked: ${_station.officialFacilities!.checkedOn}',
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(_station.officialFacilities!.sourceUrl),
+                    ],
                   ),
                 ),
               ),
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: SelectableText(
+                'Government transit feed: https://developer.data.gov.my/realtime-api/gtfs-static',
+              ),
+            ),
           ],
         ),
       ),
@@ -187,7 +173,11 @@ class _AccessibilityStationDetailScreenState
 
   Widget _facilityCard(AccessibilityFacility facility) {
     final status = _station.facilities[facility]!;
-    final observation = _station.latestObservations[facility];
+    final official = _station.officialFacilities;
+    final fromGovernment =
+        facility == AccessibilityFacility.wheelchairAccess &&
+        _station.stop.accessibilityKnown;
+    final fromOfficial = official?.facilities.containsKey(facility) ?? false;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
@@ -197,12 +187,11 @@ class _AccessibilityStationDetailScreenState
         ),
         title: Text(facility.label),
         subtitle: Text(
-          observation == null
-              ? facility == AccessibilityFacility.wheelchairAccess ||
-                        facility == AccessibilityFacility.stepFreeAccess
-                    ? 'From the bundled GTFS wheelchair field'
-                    : 'No verified data in the supplied feed'
-              : 'Reported ${accessibilityTimeLabel(observation.createdAt)}',
+          fromGovernment
+              ? 'Government GTFS wheelchair-boarding record'
+              : fromOfficial
+              ? '${official!.sourceName} - Checked ${official.checkedOn}'
+              : 'Not confirmed by available official records',
         ),
         trailing: Chip(
           avatar: Icon(status.icon, size: 17, color: status.colour),

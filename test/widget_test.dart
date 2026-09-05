@@ -57,9 +57,7 @@ void main() {
     final result = AccessibilityService.instance.filterStations(
       stations: [station],
       query: 'Test',
-      accessibleOnly: true,
       requiredFacilities: const {AccessibilityFacility.lift},
-      workingLiftsOnly: true,
     );
     expect(result, isEmpty);
   });

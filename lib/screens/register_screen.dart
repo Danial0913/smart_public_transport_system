@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../data/local_storage_service.dart';
+import '../data/password_policy.dart';
 import '../theme/app_theme.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -87,26 +88,6 @@ class _RegisterScreenState
 
     if (!phonePattern.hasMatch(phone)) {
       return 'Please enter a valid Malaysian phone number.';
-    }
-
-    return null;
-  }
-
-  String? _validatePassword(String? value) {
-    if (value == null || value.isEmpty) {
-      return 'Please enter a password.';
-    }
-
-    if (value.length < 8) {
-      return 'Password must contain at least 8 characters.';
-    }
-
-    if (!RegExp(r'[A-Za-z]').hasMatch(value)) {
-      return 'Password must contain at least one letter.';
-    }
-
-    if (!RegExp(r'[0-9]').hasMatch(value)) {
-      return 'Password must contain at least one number.';
     }
 
     return null;
@@ -374,6 +355,9 @@ class _RegisterScreenState
                   ],
                   decoration: InputDecoration(
                     labelText: 'Password',
+                    helperText: passwordRequirements,
+                    helperMaxLines: 5,
+                    errorMaxLines: 3,
                     hintText:
                     'At least 8 characters',
                     prefixIcon:
@@ -396,7 +380,7 @@ class _RegisterScreenState
                       ),
                     ),
                   ),
-                  validator: _validatePassword,
+                  validator: validateNewPassword,
                 ),
 
                 const SizedBox(height: 18),

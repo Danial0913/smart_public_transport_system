@@ -1,0 +1,981 @@
+{
+  "schemaVersion": 1,
+  "notice": "Documented facilities only. Does not confirm current operation or a complete step-free route.",
+  "stations": [
+    {
+      "stopId": "rapid-kl-rail:KG04",
+      "stopName": "KWASA DAMANSARA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/kwasa-damansara/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG05",
+      "stopName": "KWASA SENTRAL",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/kwasa-sentral/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG06",
+      "stopName": "KOTA DAMANSARA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/kota-damansara/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG07",
+      "stopName": "SURIAN",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/surian/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG08",
+      "stopName": "MUTIARA DAMANSARA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/mutiara-damansara/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG09",
+      "stopName": "BANDAR UTAMA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/bandar-utama/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG10",
+      "stopName": "TAMAN TUN DR ISMAIL",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/taman-tun-dr-ismail/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG12",
+      "stopName": "PHILEO DAMANSARA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/phileo-damansara/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG13",
+      "stopName": "PUSAT BANDAR DAMANSARA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/pusat-bandar-damansara/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG14",
+      "stopName": "SEMANTAN",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/semantan/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG15",
+      "stopName": "MUZIUM NEGARA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/muzium-negara-kl-sentral/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG16",
+      "stopName": "PASAR SENI",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/pasar-seni/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG17",
+      "stopName": "MERDEKA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/merdeka/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG18A",
+      "stopName": "BUKIT BINTANG",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/bukit-bintang/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG20",
+      "stopName": "TUN RAZAK EXCHANGE",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/tun-razak-exchange/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG21",
+      "stopName": "COCHRANE",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/cochrane/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG22",
+      "stopName": "MALURI",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/maluri/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG23",
+      "stopName": "TAMAN PERTAMA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/taman-pertama/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG24",
+      "stopName": "TAMAN MIDAH",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/taman-midah/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG25",
+      "stopName": "TAMAN MUTIARA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/taman-mutiara/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG26",
+      "stopName": "TAMAN CONNAUGHT",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/taman-connaught/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG27",
+      "stopName": "TAMAN SUNTEX",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/taman-suntex/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG28",
+      "stopName": "SRI RAYA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/sri-raya/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG29",
+      "stopName": "BANDAR TUN HUSSEIN ONN",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/bandar-tun-hussein-onn/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG30",
+      "stopName": "BATU 11 CHERAS",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/batu-sebelas-cheras/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG31",
+      "stopName": "BUKIT DUKUNG",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/bukit-dukung/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG33",
+      "stopName": "SUNGAI JERNIH",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/sungai-jernih/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG34",
+      "stopName": "STADIUM KAJANG",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/stadium-kajang/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:KG35",
+      "stopName": "KAJANG",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/kajang-line/stations/kajang/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY01",
+      "stopName": "KWASA DAMANSARA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/kwasa-damansara/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY03",
+      "stopName": "KAMPUNG SELAMAT",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/kampung-selamat/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY04",
+      "stopName": "SUNGAI BULOH",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/sungai-buloh/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY05",
+      "stopName": "DAMANSARA DAMAI",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/damansara-damai/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY06",
+      "stopName": "SRI DAMANSARA BARAT",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/sri-damansara-barat/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY07",
+      "stopName": "SRI DAMANSARA SENTRAL",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/sri-damansara-sentral/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY08",
+      "stopName": "SRI DAMANSARA TIMUR",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/sri-damansara-timur/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY09",
+      "stopName": "METRO PRIMA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/metro-prima/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY10",
+      "stopName": "KEPONG BARU",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/kepong-baru/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY11",
+      "stopName": "JINJANG",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/jinjang/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY12",
+      "stopName": "SRI DELIMA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/seri-delima/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY13",
+      "stopName": "KAMPUNG BATU",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/kampung-batu/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY14",
+      "stopName": "KENTOMEN",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/kentonmen/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY15",
+      "stopName": "JALAN IPOH",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/jalan-ipoh/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY16",
+      "stopName": "SENTUL BARAT",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/sentul-west/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY17",
+      "stopName": "TITIWANGSA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/titiwangsa/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY18",
+      "stopName": "HOSPITAL KUALA LUMPUR",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/hospital-kuala-lumpur/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY19",
+      "stopName": "RAJA UDA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/raja-uda/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY20",
+      "stopName": "AMPANG PARK",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/ampang-park/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY21",
+      "stopName": "PERSIARAN KLCC",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/persiaran-klcc/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY22",
+      "stopName": "CONLAY",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/conlay/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY23",
+      "stopName": "TUN RAZAK EXCHANGE",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/tun-razak-exchange-trx/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY24",
+      "stopName": "CHAN SOW LIN",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/chan-sow-lin/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY27",
+      "stopName": "KUCHAI",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/kuchai/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY28",
+      "stopName": "TAMAN NAGA EMAS",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/taman-naga-emas/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY29",
+      "stopName": "SUNGAI BESI",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/sungai-besi/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY31",
+      "stopName": "SERDANG RAYA UTARA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/serdang-raya-utara/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY32",
+      "stopName": "SERDANG RAYA SELATAN",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/serdang-raya-selatan/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY33",
+      "stopName": "SERDANG JAYA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/serdang-jaya/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY34",
+      "stopName": "UPM",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/upm/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY36",
+      "stopName": "TAMAN EQUINE",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/taman-equine/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY37",
+      "stopName": "PUTRA PERMAI",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/putra-permai/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY38",
+      "stopName": "16 SIERRA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/16-sierra/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY39",
+      "stopName": "CYBERJAYA UTARA",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/cyberjaya-utara/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY40",
+      "stopName": "CYBERJAYA CITY CENTRE",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/cyberjaya-city-centre/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    },
+    {
+      "stopId": "rapid-kl-rail:PY41",
+      "stopName": "PUTRAJAYA SENTRAL",
+      "sourceName": "MRT Corp",
+      "sourceUrl": "https://www.mymrt.com.my/projects/putrajaya-line/stations/putrajaya-sentral/",
+      "checkedOn": "2026-09-05",
+      "facilities": {
+        "lift": "available",
+        "accessibleToilet": "available"
+      },
+      "evidence": {
+        "lift": "Lift",
+        "accessibleToilet": "Disabled-friendly toilets"
+      }
+    }
+  ]
+}

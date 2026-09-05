@@ -2,8 +2,28 @@ import 'dart:math' as math;
 
 import '../models/accessibility_models.dart';
 import '../models/transit_models.dart';
-import 'local_storage_service.dart';
+import 'official_accessibility_catalog.dart';
 import 'transit_repository.dart';
+
+/// An ordered local stop index. Detailed results are materialized one page at a
+/// time; the underlying transit feed is already loaded by TransitRepository.
+class AccessibilityStationSearch {
+  AccessibilityStationSearch({
+    required List<TransitStop> stops,
+    required this.profileForStop,
+  }) : _stops = List.unmodifiable(stops);
+
+  final List<TransitStop> _stops;
+  final StationAccessibility Function(TransitStop) profileForStop;
+
+  int get totalCount => _stops.length;
+
+  List<StationAccessibility> page({required int offset, int limit = 100}) {
+    RangeError.checkNotNegative(offset, 'offset');
+    RangeError.checkNotNegative(limit, 'limit');
+    return _stops.skip(offset).take(limit).map(profileForStop).toList();
+  }
+}
 
 class AccessibilityService {
   AccessibilityService._();
@@ -11,7 +31,7 @@ class AccessibilityService {
   static final AccessibilityService instance = AccessibilityService._();
 
   final TransitRepository _repository = TransitRepository.instance;
-  final LocalStorageService _storage = LocalStorageService.instance;
+  final _officialCatalog = OfficialAccessibilityCatalog.instance;
 
   static const regions = <AccessibilityRegion>[
     AccessibilityRegion(
@@ -82,15 +102,53 @@ class AccessibilityService {
     ),
   ];
 
+  Future<AccessibilityStationSearch> searchStations({
+    required AccessibilityRegion region,
+    required String query,
+    required Set<AccessibilityFacility> requiredFacilities,
+  }) async {
+    await _repository.ensureDataNear(region.latitude, region.longitude);
+    await _officialCatalog.load();
+    StationAccessibility profile(TransitStop stop) =>
+        profileForStop(stop, const []);
+
+    // Scan once for filtering/ranking, retaining only stop references and scores.
+    // Detailed profiles are retained only for requested pages.
+    final matches = <(TransitStop, int)>[];
+    final normalized = query.trim().toLowerCase();
+    for (final stop in _repository.stops) {
+      if (_distanceKm(
+            region.latitude,
+            region.longitude,
+            stop.latitude,
+            stop.longitude,
+          ) >
+          region.radiusKm) {
+        continue;
+      }
+      final station = profile(stop);
+      if (!_matches(station, normalized, requiredFacilities)) {
+        continue;
+      }
+      matches.add((stop, _score(station)));
+    }
+    matches.sort((a, b) {
+      final score = b.$2.compareTo(a.$2);
+      if (score != 0) return score;
+      final name = a.$1.name.compareTo(b.$1.name);
+      return name != 0 ? name : a.$1.id.compareTo(b.$1.id);
+    });
+    return AccessibilityStationSearch(
+      stops: matches.map((entry) => entry.$1).toList(),
+      profileForStop: profile,
+    );
+  }
+
   Future<List<StationAccessibility>> stationsForRegion(
     AccessibilityRegion region,
   ) async {
     await _repository.ensureDataNear(region.latitude, region.longitude);
-    final observations = await _storage.getAccessibilityObservations();
-    final byStop = <String, List<AccessibilityObservation>>{};
-    for (final observation in observations) {
-      byStop.putIfAbsent(observation.stopId, () => []).add(observation);
-    }
+    await _officialCatalog.load();
 
     final stations = _repository.stops
         .where(
@@ -103,7 +161,8 @@ class AccessibilityService {
               ) <=
               region.radiusKm,
         )
-        .map((stop) => profileForStop(stop, byStop[stop.id] ?? const []))
+        .map((stop) => profileForStop(stop, const []))
+        .where((station) => station.hasAvailableFacilities)
         .toList();
     stations.sort((a, b) {
       final accessibility = (b.hasVerifiedAccessibility ? 1 : 0).compareTo(
@@ -134,59 +193,64 @@ class AccessibilityService {
         : AccessibilityFacilityStatus.unavailable;
     final facilities = <AccessibilityFacility, AccessibilityFacilityStatus>{
       AccessibilityFacility.wheelchairAccess: baseStatus,
-      AccessibilityFacility.stepFreeAccess: baseStatus,
+      // Wheelchair boarding does not independently certify a step-free route.
+      AccessibilityFacility.stepFreeAccess: AccessibilityFacilityStatus.unknown,
       AccessibilityFacility.lift: AccessibilityFacilityStatus.unknown,
       AccessibilityFacility.accessibleToilet:
           AccessibilityFacilityStatus.unknown,
     };
-    for (final entry in latest.entries) {
-      facilities[entry.key] = entry.value.status;
+    final official = _officialCatalog.forStop(stop.id);
+    if (official != null) {
+      facilities.addAll(official.facilities);
+      // An explicit government boarding field takes priority for that field.
+      if (stop.accessibilityKnown) {
+        facilities[AccessibilityFacility.wheelchairAccess] = baseStatus;
+      }
     }
     return StationAccessibility(
       stop: stop,
       facilities: facilities,
       latestObservations: latest,
+      officialFacilities: official,
     );
   }
 
   List<StationAccessibility> filterStations({
     required List<StationAccessibility> stations,
     required String query,
-    required bool accessibleOnly,
     required Set<AccessibilityFacility> requiredFacilities,
-    required bool workingLiftsOnly,
   }) {
     final normalized = query.trim().toLowerCase();
-    final filtered = stations.where((station) {
-      if (normalized.isNotEmpty &&
-          !station.stop.name.toLowerCase().contains(normalized)) {
-        return false;
-      }
-      if (accessibleOnly && !station.hasVerifiedAccessibility) return false;
-      for (final facility in requiredFacilities) {
-        if (station.facilities[facility] ==
-            AccessibilityFacilityStatus.unavailable) {
-          return false;
-        }
-      }
-      if (workingLiftsOnly &&
-          station.facilities[AccessibilityFacility.lift] ==
-              AccessibilityFacilityStatus.unavailable) {
-        return false;
-      }
-      return true;
-    }).toList();
+    final filtered = stations
+        .where((station) => _matches(station, normalized, requiredFacilities))
+        .toList();
     filtered.sort((a, b) {
-      int score(StationAccessibility station) {
-        return station.facilities.values
-            .where((status) => status == AccessibilityFacilityStatus.available)
-            .length;
-      }
-
-      final result = score(b).compareTo(score(a));
-      return result != 0 ? result : a.stop.name.compareTo(b.stop.name);
+      final result = _score(b).compareTo(_score(a));
+      if (result != 0) return result;
+      final name = a.stop.name.compareTo(b.stop.name);
+      return name != 0 ? name : a.stop.id.compareTo(b.stop.id);
     });
     return filtered;
+  }
+
+  int _score(StationAccessibility station) => station.facilities.values
+      .where((status) => status == AccessibilityFacilityStatus.available)
+      .length;
+
+  bool _matches(
+    StationAccessibility station,
+    String normalized,
+    Set<AccessibilityFacility> requiredFacilities,
+  ) {
+    if (!station.hasAvailableFacilities) return false;
+    if (normalized.isNotEmpty &&
+        !station.stop.name.toLowerCase().contains(normalized)) {
+      return false;
+    }
+    for (final facility in requiredFacilities) {
+      if (!station.supports(facility)) return false;
+    }
+    return true;
   }
 
   double _distanceKm(double lat1, double lon1, double lat2, double lon2) {

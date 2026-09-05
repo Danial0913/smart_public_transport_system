@@ -12,8 +12,10 @@ import '../data/malaysia_time.dart';
 import '../data/transit_repository.dart';
 import '../models/accessibility_models.dart';
 import '../models/transit_models.dart';
+import '../models/travel_preferences.dart';
 import '../theme/app_theme.dart';
 import 'supported_stop_map_picker.dart';
+import 'saved_places_widgets.dart';
 
 class JourneyPlannerScreen extends StatefulWidget {
   const JourneyPlannerScreen({
@@ -25,6 +27,7 @@ class JourneyPlannerScreen extends StatefulWidget {
     this.initialAccessibleOnly,
     this.initialSavedJourney,
     this.onStartJourney,
+    this.storage,
   });
 
   final String initialOrigin;
@@ -34,6 +37,7 @@ class JourneyPlannerScreen extends StatefulWidget {
   final bool? initialAccessibleOnly;
   final SavedJourney? initialSavedJourney;
   final ValueChanged<JourneyOption>? onStartJourney;
+  final LocalStorageService? storage;
 
   @override
   State<JourneyPlannerScreen> createState() => _JourneyPlannerScreenState();
@@ -41,11 +45,12 @@ class JourneyPlannerScreen extends StatefulWidget {
 
 class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
   final TransitRepository _repository = TransitRepository.instance;
-  final LocalStorageService _storage = LocalStorageService.instance;
+  LocalStorageService get _storage =>
+      widget.storage ?? LocalStorageService.instance;
   final JourneyNotificationService _notifications =
       JourneyNotificationService.instance;
   final LocationService _locationService = LocationService();
-  final GeocodingService _geocodingService = GeocodingService();
+  late final GeocodingService _geocodingService = GeocodingService();
 
   late final TextEditingController _originController;
   late final TextEditingController _destinationController;
@@ -120,12 +125,21 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
           _storage.getAccessibilityPreferences()
         else
           Future<Object?>.value(),
+        _storage.getTravelPreferences(),
       ]);
       final recentSearches = results[0] as List<RecentSearch>;
       final savedJourneys = results[1] as List<SavedJourney>;
       final accessibilityPreferences = results[2] as AccessibilityPreferences?;
+      final travelPreferences = results[3] as TravelPreferences;
       if (!mounted) return;
       setState(() {
+        _selectedModes
+          ..clear()
+          ..addAll(travelPreferences.plannerModes);
+        _maximumWalkingDistance = travelPreferences.maximumWalkingMetres
+            .toDouble();
+        _routePreference = travelPreferences.routePreference;
+        _fewerTransfers = travelPreferences.preferFewerTransfers;
         if (accessibilityPreferences != null) {
           _accessibleOnly = accessibilityPreferences.accessibleRoutesOnly;
         }
@@ -366,7 +380,7 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         selectedDestination,
         selectedModes: _selectedModes,
       );
-      var routes = await _repository.findJourneys(
+      final routes = await _repository.findJourneys(
         origin: selectedOrigin,
         destination: selectedDestination,
         requestedTime: requestedTime,
@@ -377,21 +391,6 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
         maximumWalkingMetres: _maximumWalkingDistance.round(),
         preference: _routePreference,
       );
-      var usedExpandedWalkingSearch = false;
-      if (routes.isEmpty && _maximumWalkingDistance < 10000) {
-        routes = await _repository.findJourneys(
-          origin: selectedOrigin,
-          destination: selectedDestination,
-          requestedTime: requestedTime,
-          departAt: true,
-          selectedModes: _selectedModes,
-          accessibleOnly: _accessibleOnly,
-          fewerTransfers: _fewerTransfers,
-          maximumWalkingMetres: 10000,
-          preference: _routePreference,
-        );
-        usedExpandedWalkingSearch = routes.isNotEmpty;
-      }
 
       if (routes.isNotEmpty) {
         await _storage.recordSearch(
@@ -414,14 +413,9 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
 
       if (routes.isEmpty) {
         _showMessage(
-          'No connected official service was found for these locations and filters.',
+          'No route matches these locations and filters. Try increasing the walking limit or selecting another transport mode.',
         );
       } else {
-        if (usedExpandedWalkingSearch) {
-          _showMessage(
-            'The nearest connected stations are beyond your walking limit; showing the closest available routes.',
-          );
-        }
         if (startBestMatch) {
           await _startJourneyOnMap(routes.first);
         } else {
@@ -802,6 +796,15 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
       ),
       child: Column(
         children: [
+          SavedPlaceSelector(
+            settings: _storage,
+            label: 'Use saved place as origin',
+            onSelected: (location) => setState(() {
+              _originLocation = location;
+              _originController.text = location.name;
+              _routeResults = [];
+            }),
+          ),
           _buildLocationField(
             controller: _originController,
             label: 'Origin',
@@ -839,6 +842,15 @@ class _JourneyPlannerScreenState extends State<JourneyPlannerScreen> {
             ),
           ),
           const SizedBox(height: 12),
+          SavedPlaceSelector(
+            settings: _storage,
+            label: 'Use saved place as destination',
+            onSelected: (location) => setState(() {
+              _destinationLocation = location;
+              _destinationController.text = location.name;
+              _routeResults = [];
+            }),
+          ),
           _buildLocationField(
             controller: _destinationController,
             label: 'Destination',
@@ -2320,6 +2332,8 @@ Color _routeColour(TransitRoute route) {
 
 String _savedReminderMessage(JourneyReminderResult result) {
   return switch (result) {
+    JourneyReminderResult.disabled =>
+      'Journey plan saved. Travel notifications are turned off in your profile.',
     JourneyReminderResult.scheduledExact =>
       'Journey plan saved. A reminder will appear at departure time.',
     JourneyReminderResult.scheduledInexact =>

@@ -29,7 +29,7 @@ class AccessibilityComparisonScreen extends StatelessWidget {
               borderRadius: BorderRadius.circular(16),
             ),
             child: const Text(
-              'Reported information can change. Check recent observations before travelling.',
+              'Only officially available facilities are shown. A dash means availability is not confirmed for that stop. Live operating status is not provided.',
               style: TextStyle(color: Color(0xFF00695C)),
             ),
           ),
@@ -44,9 +44,12 @@ class AccessibilityComparisonScreen extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          ...AccessibilityFacility.values.map(
-            (facility) => _comparisonRow(facility),
-          ),
+          ...AccessibilityFacility.values
+              .where(
+                (facility) =>
+                    first.supports(facility) || second.supports(facility),
+              )
+              .map((facility) => _comparisonRow(facility)),
           const SizedBox(height: 18),
           _summaryCard(),
         ],
@@ -96,6 +99,12 @@ class AccessibilityComparisonScreen extends StatelessWidget {
   }
 
   Widget _status(AccessibilityFacilityStatus status) {
+    if (status != AccessibilityFacilityStatus.available) {
+      return Semantics(
+        label: 'Availability not confirmed',
+        child: const Text('—', textAlign: TextAlign.center),
+      );
+    }
     return Column(
       children: [
         Icon(status.icon, color: status.colour, size: 21),

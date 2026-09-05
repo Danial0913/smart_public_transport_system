@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
+import 'local_storage_service.dart';
+import 'travel_settings.dart';
 
 enum JourneyReminderResult {
   scheduledExact,
@@ -9,10 +11,16 @@ enum JourneyReminderResult {
   shownNow,
   permissionDenied,
   failed,
+  disabled,
 }
 
 class JourneyNotificationService {
-  JourneyNotificationService._();
+  JourneyNotificationService._() : _settings = null;
+
+  @visibleForTesting
+  JourneyNotificationService.forTesting(TravelSettings settings)
+    : _settings = settings;
+  final TravelSettings? _settings;
 
   static final JourneyNotificationService instance =
       JourneyNotificationService._();
@@ -78,6 +86,11 @@ class JourneyNotificationService {
     required DateTime departureTime,
   }) async {
     try {
+      final preferences = await (_settings ?? LocalStorageService.instance)
+          .getTravelPreferences();
+      if (!preferences.travelNotifications) {
+        return JourneyReminderResult.disabled;
+      }
       return await _scheduleJourney(
         journeyId: journeyId,
         origin: origin,
@@ -177,6 +190,12 @@ class JourneyNotificationService {
     return exactAlarmAllowed
         ? JourneyReminderResult.scheduledExact
         : JourneyReminderResult.scheduledInexact;
+  }
+
+  Future<void> cancelAllReminders() async {
+    await initialise();
+    await _notifications.cancelAll();
+    selectedJourneyId.value = null;
   }
 
   Future<void> cancelJourney(String journeyId) async {

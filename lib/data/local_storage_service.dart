@@ -1,5 +1,11 @@
 import 'dart:convert';
+import 'password_policy.dart';
+import 'account_settings.dart';
+import 'travel_settings.dart';
+import 'location_service.dart';
+import '../models/travel_preferences.dart';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
 import 'package:crypto/crypto.dart';
@@ -8,12 +14,21 @@ import '../models/transit_models.dart';
 import '../models/travel_history_models.dart';
 import '../models/user_models.dart';
 
-class LocalStorageService {
+class LocalStorageService implements AccountSettings, TravelSettings {
   LocalStorageService._();
+
+  @visibleForTesting
+  LocalStorageService.forTesting(Database database) : _database = database;
 
   static final LocalStorageService instance = LocalStorageService._();
 
   Database? _database;
+  final ValueNotifier<AppUser?> _currentUser = ValueNotifier(null);
+  @override
+  ValueListenable<AppUser?> get currentUser => _currentUser;
+
+  @override
+  void logout() => _currentUser.value = null;
 
   Future<void> initialise() async {
     if (_database != null) return;
@@ -25,7 +40,7 @@ class LocalStorageService {
 
     _database = await openDatabase(
       databasePath,
-      version: 9,
+      version: 11,
       onConfigure: (database) async {
         await database.execute('PRAGMA foreign_keys = ON');
       },
@@ -168,6 +183,8 @@ class LocalStorageService {
         )
       ''');
         await _createAccessibilityTables(database);
+        await _createPrivacySettingsTable(database);
+        await _createTravelSettingsTables(database);
       },
       onUpgrade: (database, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -266,6 +283,12 @@ class LocalStorageService {
         }
         if (oldVersion < 9) {
           await _createEndedJourneyRunsTable(database);
+        }
+        if (oldVersion < 10) {
+          await _createPrivacySettingsTable(database);
+        }
+        if (oldVersion < 11) {
+          await _createTravelSettingsTables(database);
         }
       },
     );
@@ -390,26 +413,29 @@ class LocalStorageService {
     String? preference,
   }) async {
     final database = await _db;
-    await database.delete(
-      'recent_searches',
-      where: 'LOWER(TRIM(origin)) = ? AND LOWER(TRIM(destination)) = ?',
-      whereArgs: [
-        origin.name.trim().toLowerCase(),
-        destination.name.trim().toLowerCase(),
-      ],
-    );
-    await database.insert('recent_searches', {
-      'origin': origin.name.trim(),
-      'destination': destination.name.trim(),
-      'origin_latitude': origin.latitude,
-      'origin_longitude': origin.longitude,
-      'destination_latitude': destination.latitude,
-      'destination_longitude': destination.longitude,
-      'requested_time': requestedTime?.toIso8601String(),
-      'preference': preference,
-      'searched_at': DateTime.now().toIso8601String(),
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
-    await database.rawDelete('''
+    await database.transaction((database) async {
+      final privacy = await database.query('privacy_settings', where: 'id = 1');
+      if (privacy.isNotEmpty && privacy.first['save_searches'] == 0) return;
+      await database.delete(
+        'recent_searches',
+        where: 'LOWER(TRIM(origin)) = ? AND LOWER(TRIM(destination)) = ?',
+        whereArgs: [
+          origin.name.trim().toLowerCase(),
+          destination.name.trim().toLowerCase(),
+        ],
+      );
+      await database.insert('recent_searches', {
+        'origin': origin.name.trim(),
+        'destination': destination.name.trim(),
+        'origin_latitude': origin.latitude,
+        'origin_longitude': origin.longitude,
+        'destination_latitude': destination.latitude,
+        'destination_longitude': destination.longitude,
+        'requested_time': requestedTime?.toIso8601String(),
+        'preference': preference,
+        'searched_at': DateTime.now().toIso8601String(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await database.rawDelete('''
       DELETE FROM recent_searches
       WHERE id NOT IN (
         SELECT id FROM recent_searches
@@ -417,6 +443,7 @@ class LocalStorageService {
         LIMIT 8
       )
     ''');
+    });
   }
 
   Future<List<RecentSearch>> getRecentSearches({int limit = 5}) async {
@@ -882,6 +909,8 @@ class LocalStorageService {
     required String phone,
     required String password,
   }) async {
+    final validation = validateNewPassword(password);
+    if (validation != null) throw ArgumentError(validation);
     final database = await _db;
 
     await database.insert('users', {
@@ -897,6 +926,7 @@ class LocalStorageService {
     required String email,
     required String password,
   }) async {
+    _currentUser.value = null;
     final database = await _db;
     final normalisedEmail = email.trim().toLowerCase();
 
@@ -919,7 +949,301 @@ class LocalStorageService {
       return null;
     }
 
-    return AppUser.fromMap(userRow);
+    final user = AppUser.fromMap(userRow);
+    _currentUser.value = user;
+    return user;
+  }
+
+  AppUser _signedInUser() {
+    final user = _currentUser.value;
+    if (user == null) {
+      throw const AccountSettingsException(
+        'Please log in again to manage your account.',
+      );
+    }
+    return user;
+  }
+
+  Future<Map<String, Object?>> _verifyCurrentPassword(
+    Transaction transaction,
+    int userId,
+    String password,
+  ) async {
+    final rows = await transaction.query(
+      'users',
+      where: 'id = ?',
+      whereArgs: [userId],
+      limit: 1,
+    );
+    if (rows.isEmpty ||
+        rows.first['password_hash'] != _hashPassword(password)) {
+      throw const AccountSettingsException(
+        'Your current password is incorrect.',
+      );
+    }
+    return rows.first;
+  }
+
+  @override
+  Future<void> updateProfile({
+    required String fullName,
+    required String email,
+    required String phone,
+  }) async {
+    final user = _signedInUser();
+    final error =
+        validateProfileName(fullName) ??
+        validateProfileEmail(email) ??
+        validateProfilePhone(phone);
+    if (error != null) throw AccountSettingsException(error);
+    final normalizedEmail = email.trim().toLowerCase();
+    final database = await _db;
+    final updated = await database.transaction((transaction) async {
+      final rows = await transaction.query(
+        'users',
+        where: 'id = ?',
+        whereArgs: [user.id],
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        throw const AccountSettingsException(
+          'Please log in again to manage your account.',
+        );
+      }
+      final row = rows.first;
+      final duplicates = await transaction.query(
+        'users',
+        columns: ['id'],
+        where: 'email = ? AND id != ?',
+        whereArgs: [normalizedEmail, user.id],
+        limit: 1,
+      );
+      if (duplicates.isNotEmpty) {
+        throw const AccountSettingsException(
+          'This email is already used by another account.',
+        );
+      }
+      final changes = <String, Object?>{
+        'full_name': fullName.trim(),
+        'email': normalizedEmail,
+        'phone': phone.trim(),
+      };
+      await transaction.update(
+        'users',
+        changes,
+        where: 'id = ?',
+        whereArgs: [user.id],
+      );
+      return AppUser.fromMap({...row, ...changes});
+    });
+    if (_currentUser.value?.id == user.id) _currentUser.value = updated;
+  }
+
+  @override
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final user = _signedInUser();
+    final error = validateNewPassword(newPassword);
+    if (error != null) throw AccountSettingsException(error);
+    if (newPassword == currentPassword) {
+      throw const AccountSettingsException(
+        'Choose a password different from your current password.',
+      );
+    }
+    final database = await _db;
+    await database.transaction((transaction) async {
+      await _verifyCurrentPassword(transaction, user.id, currentPassword);
+      await transaction.update(
+        'users',
+        {'password_hash': _hashPassword(newPassword)},
+        where: 'id = ?',
+        whereArgs: [user.id],
+      );
+    });
+  }
+
+  static Future<void> _createPrivacySettingsTable(Database database) async {
+    await database.execute(
+      'CREATE TABLE IF NOT EXISTS privacy_settings('
+      'id INTEGER PRIMARY KEY CHECK(id = 1), save_searches INTEGER NOT NULL DEFAULT 1)',
+    );
+  }
+
+  static Future<void> _createTravelSettingsTables(Database database) async {
+    await database.execute('''CREATE TABLE IF NOT EXISTS travel_preferences(
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      transport_modes TEXT NOT NULL, maximum_walking_metres INTEGER NOT NULL,
+      prefer_lowest_fare INTEGER NOT NULL, prefer_fewer_transfers INTEGER NOT NULL,
+      travel_notifications INTEGER NOT NULL)''');
+    await database.execute(
+      '''CREATE TABLE IF NOT EXISTS saved_places(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      label TEXT NOT NULL COLLATE NOCASE, location_name TEXT NOT NULL,
+      latitude REAL NOT NULL, longitude REAL NOT NULL, UNIQUE(user_id, label))''',
+    );
+  }
+
+  @override
+  Future<TravelPreferences> getTravelPreferences() async {
+    final user = _currentUser.value;
+    if (user == null) return const TravelPreferences();
+    final database = await _db;
+    final rows = await database.query(
+      'travel_preferences',
+      where: 'user_id = ?',
+      whereArgs: [user.id],
+    );
+    return rows.isEmpty
+        ? const TravelPreferences()
+        : TravelPreferences.fromMap(rows.first);
+  }
+
+  @override
+  Future<void> saveTravelPreferences(TravelPreferences preferences) async {
+    final user = _signedInUser();
+    if (preferences.transportModes.isEmpty ||
+        !const {
+          'Bus',
+          'Train',
+          'Ferry',
+        }.containsAll(preferences.transportModes) ||
+        preferences.maximumWalkingMetres < 500 ||
+        preferences.maximumWalkingMetres > 5000) {
+      throw const AccountSettingsException(
+        'Select at least one transport mode and a walking distance between 0.5 and 5 km.',
+      );
+    }
+    final database = await _db;
+    await database.insert('travel_preferences', {
+      'user_id': user.id,
+      ...preferences.toMap(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  @override
+  Future<List<SavedPlace>> getSavedPlaces() async {
+    final user = _currentUser.value;
+    if (user == null) return [];
+    final database = await _db;
+    final rows = await database.query(
+      'saved_places',
+      where: 'user_id = ?',
+      whereArgs: [user.id],
+      orderBy: 'label COLLATE NOCASE',
+    );
+    return rows.map(SavedPlace.fromMap).toList();
+  }
+
+  @override
+  Future<void> savePlace({
+    int? id,
+    required String label,
+    required JourneyLocation location,
+  }) async {
+    final user = _signedInUser();
+    if (label.trim().isEmpty ||
+        label.trim().length > 50 ||
+        location.name.trim().isEmpty ||
+        !location.latitude.isFinite ||
+        !location.longitude.isFinite ||
+        !LocationService.isInsideMalaysia(
+          location.latitude,
+          location.longitude,
+        )) {
+      throw const AccountSettingsException(
+        'Enter a place name of up to 50 characters and select a location in Malaysia.',
+      );
+    }
+    final database = await _db;
+    await database.transaction((transaction) async {
+      final duplicates = await transaction.query(
+        'saved_places',
+        columns: ['id'],
+        where: 'user_id = ? AND label = ? AND id != ?',
+        whereArgs: [user.id, label.trim(), id ?? -1],
+      );
+      if (duplicates.isNotEmpty) {
+        throw const AccountSettingsException(
+          'You already have a saved place with this name.',
+        );
+      }
+      final values = <String, Object?>{
+        'label': label.trim(),
+        'location_name': location.name.trim(),
+        'latitude': location.latitude,
+        'longitude': location.longitude,
+      };
+      if (id == null) {
+        await transaction.insert('saved_places', {
+          'user_id': user.id,
+          ...values,
+        });
+      } else {
+        final count = await transaction.update(
+          'saved_places',
+          values,
+          where: 'id = ? AND user_id = ?',
+          whereArgs: [id, user.id],
+        );
+        if (count != 1) {
+          throw const AccountSettingsException(
+            'This saved place is no longer available.',
+          );
+        }
+      }
+    });
+  }
+
+  @override
+  Future<void> deletePlace(int id) async {
+    final user = _signedInUser();
+    final database = await _db;
+    await database.delete(
+      'saved_places',
+      where: 'id = ? AND user_id = ?',
+      whereArgs: [id, user.id],
+    );
+  }
+
+  @override
+  Future<bool> getSearchHistoryEnabled() async {
+    final database = await _db;
+    final rows = await database.query('privacy_settings', where: 'id = 1');
+    return rows.isEmpty || rows.first['save_searches'] == 1;
+  }
+
+  @override
+  Future<void> setSearchHistoryEnabled(bool enabled) async {
+    final database = await _db;
+    await database.insert('privacy_settings', {
+      'id': 1,
+      'save_searches': enabled ? 1 : 0,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  @override
+  Future<void> clearRecentSearches() async {
+    final database = await _db;
+    await database.delete('recent_searches');
+  }
+
+  /// Called by PasswordRecoveryService only after server-side email verification.
+  Future<void> updateRecoveredPassword(String email, String password) async {
+    final validation = validateNewPassword(password);
+    if (validation != null) throw ArgumentError(validation);
+    final database = await _db;
+    final count = await database.update(
+      'users',
+      {'password_hash': _hashPassword(password)},
+      where: 'email = ?',
+      whereArgs: [email.trim().toLowerCase()],
+    );
+    if (count != 1) {
+      throw StateError('The account is no longer available on this device.');
+    }
   }
 
   Future<AccessibilityPreferences> getAccessibilityPreferences() async {

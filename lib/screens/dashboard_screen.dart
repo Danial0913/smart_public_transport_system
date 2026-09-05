@@ -922,38 +922,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return AppBar(
       automaticallyImplyLeading: false,
       toolbarHeight: 72,
-      title: const Row(
-        children: [
-          CircleAvatar(
-            radius: 22,
-            backgroundColor: Color(0xFFE3F2FD),
-            child: Text(
-              'UN',
-              style: TextStyle(
-                color: AppTheme.primaryBlue,
-                fontWeight: FontWeight.bold,
+      title: ValueListenableBuilder(
+        valueListenable: _storage.currentUser,
+        builder: (context, user, _) => Row(
+          children: [
+            const CircleAvatar(
+              radius: 22,
+              backgroundColor: Color(0xFFE3F2FD),
+              child: Icon(Icons.person, color: AppTheme.primaryBlue),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Good Morning,',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.secondaryText,
+                    ),
+                  ),
+                  Text(
+                    user?.fullName ?? 'Welcome',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.darkBlue,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-          SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Good Morning,',
-                style: TextStyle(fontSize: 12, color: AppTheme.secondaryText),
-              ),
-              Text(
-                'UserName',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.darkBlue,
-                ),
-              ),
-            ],
-          ),
-        ],
+          ],
+        ),
       ),
       actions: [
         IconButton(

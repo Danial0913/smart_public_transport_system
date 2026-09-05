@@ -94,18 +94,39 @@ class StationAccessibility {
     required this.stop,
     required this.facilities,
     required this.latestObservations,
+    this.officialFacilities,
   });
 
   final TransitStop stop;
   final Map<AccessibilityFacility, AccessibilityFacilityStatus> facilities;
   final Map<AccessibilityFacility, AccessibilityObservation> latestObservations;
+  final OfficialStationFacilities? officialFacilities;
 
   bool get hasVerifiedAccessibility =>
       stop.accessibilityKnown && stop.accessible;
 
+  Iterable<AccessibilityFacility> get availableFacilities =>
+      AccessibilityFacility.values.where(supports);
+
+  bool get hasAvailableFacilities => availableFacilities.isNotEmpty;
+
   bool supports(AccessibilityFacility facility) {
     return facilities[facility] == AccessibilityFacilityStatus.available;
   }
+}
+
+class OfficialStationFacilities {
+  const OfficialStationFacilities({
+    required this.sourceName,
+    required this.sourceUrl,
+    required this.checkedOn,
+    required this.facilities,
+  });
+
+  final String sourceName;
+  final String sourceUrl;
+  final String checkedOn;
+  final Map<AccessibilityFacility, AccessibilityFacilityStatus> facilities;
 }
 
 class AccessibilityRegion {

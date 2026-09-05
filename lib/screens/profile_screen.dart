@@ -1,16 +1,143 @@
 import 'package:flutter/material.dart';
+import '../data/account_settings.dart';
+import '../data/local_storage_service.dart';
+import '../data/travel_settings.dart';
+import '../data/journey_notification_service.dart';
+import '../models/travel_preferences.dart';
+import '../models/user_models.dart';
 import '../theme/app_theme.dart';
 import 'accessibility_screen.dart';
 import 'login_screen.dart';
+import 'account_form_screen.dart';
+import 'privacy_security_screen.dart';
+import 'saved_places_widgets.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  const ProfileScreen({
+    super.key,
+    this.account,
+    this.travelSettings,
+    this.cancelReminders,
+  });
+  final AccountSettings? account;
+  final TravelSettings? travelSettings;
+  final Future<void> Function()? cancelReminders;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  TravelSettings get _travelSettings =>
+      widget.travelSettings ?? LocalStorageService.instance;
+  bool _travelLoading = true;
+  bool _travelSaving = false;
+  String? _travelError;
+  bool _savedNotificationEnabled = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPreferences();
+  }
+
+  Future<void> _loadPreferences() async {
+    setState(() {
+      _travelLoading = true;
+      _travelError = null;
+    });
+    try {
+      final preferences = await _travelSettings.getTravelPreferences();
+      if (!mounted) return;
+      setState(() {
+        _selectedTransport
+          ..clear()
+          ..addAll(preferences.transportModes);
+        _maximumWalkingDistance = preferences.maximumWalkingMetres / 1000;
+        _preferLowestFare = preferences.preferLowestFare;
+        _preferFewerTransfers = preferences.preferFewerTransfers;
+        _travelNotifications = preferences.travelNotifications;
+        _savedNotificationEnabled = preferences.travelNotifications;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _travelError =
+              'Could not load travel preferences. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _travelLoading = false);
+    }
+  }
+
+  Future<void> _savePreferences() async {
+    setState(() => _travelSaving = true);
+    final preferences = TravelPreferences(
+      transportModes: Set.of(_selectedTransport),
+      maximumWalkingMetres: (_maximumWalkingDistance * 1000).round(),
+      preferLowestFare: _preferLowestFare,
+      preferFewerTransfers: _preferFewerTransfers,
+      travelNotifications: _travelNotifications,
+    );
+    try {
+      await _travelSettings.saveTravelPreferences(preferences);
+      if (_savedNotificationEnabled && !preferences.travelNotifications) {
+        try {
+          await (widget.cancelReminders ??
+              JourneyNotificationService.instance.cancelAllReminders)();
+        } catch (_) {
+          if (mounted) {
+            _showMessage(
+              'Preferences saved. Existing reminders could not be cancelled; try saving again.',
+            );
+          }
+          return;
+        }
+      }
+      _savedNotificationEnabled = preferences.travelNotifications;
+      if (mounted) {
+        _showMessage('Travel preferences saved for new journey plans.');
+      }
+    } catch (error) {
+      if (mounted) {
+        _showMessage(
+          error is AccountSettingsException
+              ? error.message
+              : 'Could not save travel preferences. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _travelSaving = false);
+    }
+  }
+
+  AccountSettings get _account =>
+      widget.account ?? LocalStorageService.instance;
+
+  Future<void> _editAccount({bool changePassword = false}) async {
+    if (_account.currentUser.value == null) {
+      _showMessage('Please log in again to manage your account.');
+      return;
+    }
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AccountFormScreen(
+          account: _account,
+          changePassword: changePassword,
+        ),
+      ),
+    );
+    if (saved == true && mounted) {
+      _showMessage(
+        changePassword
+            ? 'Password updated. Use your new password next time you log in.'
+            : 'Profile updated.',
+      );
+    }
+  }
+
   final Set<String> _selectedTransport = {'Bus', 'Train'};
 
   double _maximumWalkingDistance = 1.5;
@@ -38,11 +165,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
             subtitle: 'Personalise your journey recommendations',
           ),
           const SizedBox(height: 12),
-          _buildTransportPreferences(),
-          const SizedBox(height: 14),
-          _buildWalkingPreference(),
-          const SizedBox(height: 14),
-          _buildRoutePreferences(),
+          if (_travelLoading) const LinearProgressIndicator(),
+          if (_travelError != null) ...[
+            Text(_travelError!),
+            TextButton(
+              onPressed: _loadPreferences,
+              child: const Text('Retry Travel Preferences'),
+            ),
+          ],
+          AbsorbPointer(
+            absorbing: _travelLoading || _travelSaving || _travelError != null,
+            child: Column(
+              children: [
+                _buildTransportPreferences(),
+                const SizedBox(height: 14),
+                _buildWalkingPreference(),
+                const SizedBox(height: 14),
+                _buildRoutePreferences(),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: _travelLoading || _travelSaving || _travelError != null
+                ? null
+                : _savePreferences,
+            child: Text(_travelSaving ? 'Saving…' : 'Save Travel Preferences'),
+          ),
           const SizedBox(height: 22),
           _buildSectionTitle(
             title: 'Saved Places',
@@ -62,7 +211,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildProfileHeader() {
+  Widget _buildProfileHeader() => ValueListenableBuilder<AppUser?>(
+    valueListenable: _account.currentUser,
+    builder: (context, user, _) => _buildAccountHeader(user),
+  );
+
+  Widget _buildAccountHeader(AppUser? user) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -93,51 +247,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       size: 44,
                     ),
                   ),
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 27,
-                      height: 27,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: AppTheme.primaryBlue,
-                          width: 2,
-                        ),
-                      ),
-                      child: const Icon(
-                        Icons.camera_alt_outlined,
-                        size: 15,
-                        color: AppTheme.primaryBlue,
-                      ),
-                    ),
-                  ),
                 ],
               ),
               const SizedBox(width: 15),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'UserName',
-                      style: TextStyle(
+                      user?.fullName ?? 'Please log in',
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 21,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    SizedBox(height: 4),
+                    const SizedBox(height: 4),
                     Text(
-                      'User@email.com',
-                      style: TextStyle(color: Colors.white70, fontSize: 13),
+                      user?.email ?? '',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
                     ),
-                    SizedBox(height: 3),
+                    const SizedBox(height: 3),
                     Text(
-                      '+60 12-345 6789',
-                      style: TextStyle(color: Colors.white70, fontSize: 13),
+                      user?.phone ?? '',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                 ),
@@ -148,9 +287,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () {
-                _showMessage('Edit profile selected');
-              },
+              onPressed: user == null ? null : () => _editAccount(),
               style: OutlinedButton.styleFrom(
                 foregroundColor: Colors.white,
                 side: const BorderSide(color: Colors.white),
@@ -230,6 +367,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   color: isSelected ? AppTheme.primaryBlue : AppTheme.border,
                 ),
                 onSelected: (selected) {
+                  if (!selected && _selectedTransport.length == 1) {
+                    _showMessage('Keep at least one transport mode selected.');
+                    return;
+                  }
                   setState(() {
                     if (selected) {
                       _selectedTransport.add(transport.name);
@@ -384,7 +525,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
             subtitle: const Text(
-              'Receive service delay and journey reminders',
+              'Departure reminders for newly saved journeys. Turning this off also cancels existing reminders on this device.',
               style: TextStyle(fontSize: 11),
             ),
             onChanged: (value) {
@@ -398,93 +539,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildSavedPlaces() {
-    return Material(
-      color: Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: AppTheme.border),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          _buildSavedPlaceTile(
-            icon: Icons.home_outlined,
-            title: 'Home',
-            address: 'George Town, Penang',
-            colour: AppTheme.primaryBlue,
-          ),
-          const Divider(height: 1),
-          _buildSavedPlaceTile(
-            icon: Icons.school_outlined,
-            title: 'University',
-            address: 'TAR UMT Penang Branch',
-            colour: const Color(0xFF7B1FA2),
-          ),
-          const Divider(height: 1),
-          ListTile(
-            onTap: () {
-              _showMessage('Add a new saved place');
-            },
-            leading: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: AppTheme.primaryBlue.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.add, color: AppTheme.primaryBlue),
-            ),
-            title: const Text(
-              'Add Saved Place',
-              style: TextStyle(
-                color: AppTheme.primaryBlue,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSavedPlaceTile({
-    required IconData icon,
-    required String title,
-    required String address,
-    required Color colour,
-  }) {
-    return ListTile(
-      leading: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: colour.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Icon(icon, color: colour),
-      ),
-      title: Text(
-        title,
-        style: const TextStyle(
-          color: AppTheme.mainText,
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      subtitle: Text(
-        address,
-        style: const TextStyle(color: AppTheme.secondaryText, fontSize: 12),
-      ),
-      trailing: IconButton(
-        onPressed: () {
-          _showMessage('Edit $title location');
-        },
-        icon: const Icon(Icons.edit_outlined, size: 19),
-      ),
-    );
-  }
+  Widget _buildSavedPlaces() => SavedPlacesCard(settings: _travelSettings);
 
   Widget _buildAccessibilityCard() {
     return InkWell(
@@ -555,16 +610,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _buildSettingTile(
             icon: Icons.lock_outline,
             title: 'Change Password',
-            onTap: () {
-              _showMessage('Change password selected');
-            },
+            onTap: () => _editAccount(changePassword: true),
           ),
           const Divider(height: 1),
           _buildSettingTile(
             icon: Icons.privacy_tip_outlined,
             title: 'Privacy and Security',
             onTap: () {
-              _showMessage('Privacy settings selected');
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PrivacySecurityScreen(account: _account),
+                ),
+              );
             },
           ),
         ],
@@ -640,6 +698,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             FilledButton(
               onPressed: () {
+                _account.logout();
                 Navigator.pushAndRemoveUntil(
                   context,
                   MaterialPageRoute(builder: (context) => const LoginScreen()),

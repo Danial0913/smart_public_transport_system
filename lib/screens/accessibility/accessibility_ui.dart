@@ -22,7 +22,7 @@ extension AccessibilityStatusUi on AccessibilityFacilityStatus {
   String get label => switch (this) {
     AccessibilityFacilityStatus.available => 'Available',
     AccessibilityFacilityStatus.unavailable => 'Unavailable',
-    AccessibilityFacilityStatus.unknown => 'Not reported',
+    AccessibilityFacilityStatus.unknown => 'Unknown',
   };
 
   Color get colour => switch (this) {
