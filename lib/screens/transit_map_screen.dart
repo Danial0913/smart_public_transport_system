@@ -77,7 +77,17 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   final Map<String, String> _normalisedStopNames = {};
   final Map<String, String> _normalisedRouteNames = {};
   bool _showSuggestions = false;
-
+  bool _isFreeRouteNumber(String routeNumber) {
+    const freeRoutes = {
+      'CAT',
+      'CT13',
+      'CT14',
+      'CT15',
+    };
+    return freeRoutes.contains(
+      routeNumber.toUpperCase(),
+    );
+  }
   final List<String> _transportModes = const [
     'All',
     'Bus',
@@ -2322,8 +2332,16 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
             ),
             Chip(
               avatar: const Icon(Icons.payments_outlined, size: 18),
-              label: Text('RM${route.baseFare.toStringAsFixed(2)}'),
-            ),
+              label: Text(
+                route.sourceId == 'rapid-penang' &&
+                    route.mode == 'Bus'
+                    ? _isFreeRouteNumber(route.number)
+                    ? 'Free'
+                    : 'From RM1.40'
+                    : route.knownFare != null
+                    ? 'RM${route.knownFare!.toStringAsFixed(2)}'
+                    : 'Fare unavailable',
+              ),            ),
             Chip(
               avatar: const Icon(Icons.schedule, size: 18),
               label: Text('Every ${route.frequencyMinutes} min'),

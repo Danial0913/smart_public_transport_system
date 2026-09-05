@@ -1151,8 +1151,8 @@ class TransitRepository {
               1,
               arrival.difference(departure).inMinutes,
             ),
-            fare: template.route.baseFare,
-            knownFare: template.route.knownFare,
+            fare: template.fare,
+            knownFare: template.knownFare,
             tripId: trip.id,
             headsign: trip.headsign,
             departureTime: departure,
@@ -1239,24 +1239,114 @@ class TransitRepository {
     return _calendarsById[serviceId]?.runsOn(date) ?? true;
   }
 
+  bool _isFreeRapidPenangRoute(TransitRoute route) {
+    if (route.sourceId != 'rapid-penang') {
+      return false;
+    }
+    const freeRoutes = {
+      'CAT',
+      'CT13',
+      'CT14',
+      'CT15',
+    };
+    return freeRoutes.contains(route.number.toUpperCase());
+  }
+
+  double? _rapidPenangFare(
+      TransitRoute route,
+      List<TransitPoint> shapePoints,
+      List<TransitStop> stops,
+      ) {
+    if (route.sourceId != 'rapid-penang' ||
+        route.mode != 'Bus') {
+      return null;
+    }
+    if (_isFreeRapidPenangRoute(route)) {
+      return 0;
+    }
+    var distanceMetres = 0.0;
+    if (shapePoints.length >= 2) {
+      for (var index = 0;
+      index < shapePoints.length - 1;
+      index++) {
+        distanceMetres += _distanceBetween(
+          shapePoints[index].latitude,
+          shapePoints[index].longitude,
+          shapePoints[index + 1].latitude,
+          shapePoints[index + 1].longitude,
+        );
+      }
+    } else {
+      for (var index = 0; index < stops.length - 1; index++) {
+        distanceMetres += _distanceBetween(
+          stops[index].latitude,
+          stops[index].longitude,
+          stops[index + 1].latitude,
+          stops[index + 1].longitude,
+        );
+      }
+    }
+    final distanceKm = distanceMetres / 1000;
+    if (distanceKm <= 7) return 1.40;
+    if (distanceKm <= 14) return 2.00;
+    if (distanceKm <= 21) return 2.70;
+    if (distanceKm <= 28) return 3.40;
+    if (distanceKm <= 35) return 4.00;
+    if (distanceKm <= 42) return 4.70;
+    return 5.00;
+  }
   JourneyLeg? _createLeg(TransitRoute route, TransitStop from, TransitStop to) {
     final fromIndex = route.stopIds.indexOf(from.id);
     final toIndex = route.stopIds.indexOf(to.id);
-    if (fromIndex == -1 || toIndex == -1 || fromIndex >= toIndex) return null;
+
+    if (fromIndex == -1 ||
+        toIndex == -1 ||
+        fromIndex >= toIndex) {
+      return null;
+    }
 
     final legStops = route.stopIds
         .sublist(fromIndex, toIndex + 1)
         .map((id) => _stopsById[id]!)
         .toList();
 
+    final calculatePenangFare =
+        route.sourceId == 'rapid-penang' &&
+            route.mode == 'Bus';
+
+    final fareShapePoints =
+    calculatePenangFare &&
+        route.shapes.isNotEmpty
+        ? _shapeForLeg(
+      route.shapes.values.first,
+      from,
+      to,
+    )
+        : const <TransitPoint>[];
+
+    final calculatedFare = _rapidPenangFare(
+      route,
+      fareShapePoints,
+      legStops,
+    );
+
+    final fare =
+        calculatedFare ??
+            route.knownFare ??
+            route.baseFare;
+
     return JourneyLeg(
       route: route,
       from: from,
       to: to,
       stops: legStops,
-      durationMinutes: math.max(1, legStops.length - 1) * route.minutesPerStop,
-      fare: route.baseFare,
-      knownFare: route.knownFare,
+      durationMinutes:
+      math.max(1, legStops.length - 1) *
+          route.minutesPerStop,
+      fare: fare,
+      knownFare: _isFreeRapidPenangRoute(route)
+          ? fare
+          : route.knownFare,
     );
   }
 
