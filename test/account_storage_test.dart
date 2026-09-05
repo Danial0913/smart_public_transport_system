@@ -21,8 +21,10 @@ class AccountDatabase extends Fake implements Database, Transaction {
         'created_at': '2026-01-01T00:00:00.000',
       },
   ];
-  bool? saveSearches;
+  final saveSearchesByUser = <int, bool>{};
+  final loginAttempts = <String, Map<String, Object?>>{};
   int searchWrites = 0;
+  final searchUsers = <int>[];
 
   @override
   Future<T> transaction<T>(
@@ -43,11 +45,17 @@ class AccountDatabase extends Fake implements Database, Transaction {
     int? limit,
     int? offset,
   }) async {
+    if (table == 'login_attempts') {
+      final row = loginAttempts[whereArgs!.single];
+      return row == null ? [] : [Map<String, Object?>.of(row)];
+    }
     if (table == 'privacy_settings') {
-      return saveSearches == null
+      expect(where, 'user_id = ?');
+      final value = saveSearchesByUser[whereArgs!.single];
+      return value == null
           ? []
           : [
-              {'id': 1, 'save_searches': saveSearches! ? 1 : 0},
+              {'user_id': whereArgs.single, 'save_searches': value ? 1 : 0},
             ];
     }
     expect(table, 'users');
@@ -74,8 +82,13 @@ class AccountDatabase extends Fake implements Database, Transaction {
     ConflictAlgorithm? conflictAlgorithm,
   }) async {
     expect(table, 'users');
-    expect(where, 'id = ?');
-    final row = users.singleWhere((row) => row['id'] == whereArgs!.single);
+    final row = users.singleWhere(
+      (row) => switch (where) {
+        'id = ?' => row['id'] == whereArgs!.single,
+        'email = ?' => row['email'] == whereArgs!.single,
+        _ => throw StateError('Unexpected update'),
+      },
+    );
     row.addAll(values);
     return 1;
   }
@@ -87,11 +100,17 @@ class AccountDatabase extends Fake implements Database, Transaction {
     String? nullColumnHack,
     ConflictAlgorithm? conflictAlgorithm,
   }) async {
-    if (table == 'privacy_settings') {
-      saveSearches = values['save_searches'] == 1;
+    if (table == 'login_attempts') {
+      loginAttempts[values['email'] as String] = Map<String, Object?>.of(
+        values,
+      );
+    } else if (table == 'privacy_settings') {
+      saveSearchesByUser[values['user_id'] as int] =
+          values['save_searches'] == 1;
     } else {
       expect(table, 'recent_searches');
       searchWrites++;
+      searchUsers.add(values['user_id'] as int);
     }
     return 1;
   }
@@ -101,7 +120,13 @@ class AccountDatabase extends Fake implements Database, Transaction {
     String table, {
     String? where,
     List<Object?>? whereArgs,
-  }) async => 0;
+  }) async {
+    if (table == 'login_attempts') {
+      return loginAttempts.remove(whereArgs!.single) == null ? 0 : 1;
+    }
+    return 0;
+  }
+
   @override
   Future<int> rawDelete(String sql, [List<Object?>? arguments]) async => 0;
 }
@@ -133,12 +158,12 @@ void main() {
       await edit(' Updated@Example.com ');
       expect(storage.currentUser.value!.email, 'updated@example.com');
       expect(database.users[1]['email'], 'rider2@example.com');
-      expect(
-        await storage.loginUser(
+      await expectLater(
+        storage.loginUser(
           email: 'rider1@example.com',
           password: 'OldPassword1!',
         ),
-        isNull,
+        throwsA(isA<LoginAttemptException>()),
       );
       expect(
         await storage.loginUser(
@@ -175,12 +200,12 @@ void main() {
       );
       expect(database.users.first['password_hash'], hash('NewPassword1!'));
       expect(database.users[1]['password_hash'], hash('OldPassword1!'));
-      expect(
-        await storage.loginUser(
+      await expectLater(
+        storage.loginUser(
           email: 'rider1@example.com',
           password: 'OldPassword1!',
         ),
-        isNull,
+        throwsA(isA<LoginAttemptException>()),
       );
       expect(
         await storage.loginUser(
@@ -192,8 +217,81 @@ void main() {
     },
   );
 
+  test('Five failed logins lock the email for fifteen minutes', () async {
+    final database = AccountDatabase();
+    var now = DateTime.utc(2026, 9, 5, 12);
+    final storage = LocalStorageService.forTesting(database, now: () => now);
+
+    Future<String> failLogin(String password) async {
+      try {
+        await storage.loginUser(
+          email: ' Rider1@Example.com ',
+          password: password,
+        );
+        fail('Login should have failed.');
+      } on LoginAttemptException catch (error) {
+        return error.message;
+      }
+    }
+
+    for (var attempt = 1; attempt <= 4; attempt++) {
+      final message = await failLogin('WrongPassword1!');
+      expect(message, contains('${5 - attempt} attempt'));
+    }
+    expect(await failLogin('WrongPassword1!'), contains('15 minutes'));
+    expect(await failLogin('OldPassword1!'), contains('15 minutes'));
+
+    final reopened = LocalStorageService.forTesting(database, now: () => now);
+    await expectLater(
+      reopened.loginUser(
+        email: 'rider1@example.com',
+        password: 'OldPassword1!',
+      ),
+      throwsA(isA<LoginAttemptException>()),
+    );
+    now = now.add(const Duration(minutes: 15, seconds: 1));
+    expect(
+      await reopened.loginUser(
+        email: 'rider1@example.com',
+        password: 'OldPassword1!',
+      ),
+      isNotNull,
+    );
+    expect(database.loginAttempts, isEmpty);
+  });
+
+  test('A completed password reset clears an active login lock', () async {
+    final database = AccountDatabase();
+    final storage = LocalStorageService.forTesting(
+      database,
+      now: () => DateTime.utc(2026, 9, 5, 12),
+    );
+    for (var attempt = 0; attempt < 5; attempt++) {
+      await expectLater(
+        storage.loginUser(
+          email: 'rider1@example.com',
+          password: 'WrongPassword1!',
+        ),
+        throwsA(isA<LoginAttemptException>()),
+      );
+    }
+    expect(database.loginAttempts, isNotEmpty);
+    await storage.updateRecoveredPassword(
+      'rider1@example.com',
+      'RecoveredPassword1!',
+    );
+    expect(database.loginAttempts, isEmpty);
+    expect(
+      await storage.loginUser(
+        email: 'rider1@example.com',
+        password: 'RecoveredPassword1!',
+      ),
+      isNotNull,
+    );
+  });
+
   test(
-    'Persisted privacy preference prevents future search recording',
+    'Privacy preference and search recording belong to the signed-in account',
     () async {
       final database = AccountDatabase();
       final storage = LocalStorageService.forTesting(database);
@@ -207,16 +305,36 @@ void main() {
         latitude: 5.3,
         longitude: 100.4,
       );
+      await storage.loginUser(
+        email: 'rider1@example.com',
+        password: 'OldPassword1!',
+      );
       await storage.recordSearch(origin: origin, destination: destination);
       expect(database.searchWrites, 1);
       await storage.setSearchHistoryEnabled(false);
       final reopened = LocalStorageService.forTesting(database);
+      await reopened.loginUser(
+        email: 'rider1@example.com',
+        password: 'OldPassword1!',
+      );
       expect(await reopened.getSearchHistoryEnabled(), false);
       await reopened.recordSearch(origin: origin, destination: destination);
       expect(database.searchWrites, 1);
-      await reopened.setSearchHistoryEnabled(true);
+      await reopened.loginUser(
+        email: 'rider2@example.com',
+        password: 'OldPassword1!',
+      );
+      expect(await reopened.getSearchHistoryEnabled(), true);
       await reopened.recordSearch(origin: origin, destination: destination);
       expect(database.searchWrites, 2);
+      await reopened.loginUser(
+        email: 'rider1@example.com',
+        password: 'OldPassword1!',
+      );
+      await reopened.setSearchHistoryEnabled(true);
+      await reopened.recordSearch(origin: origin, destination: destination);
+      expect(database.searchWrites, 3);
+      expect(database.searchUsers, [1, 2, 1]);
     },
   );
 }

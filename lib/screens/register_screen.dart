@@ -14,19 +14,16 @@ class RegisterScreen extends StatefulWidget {
   }
 }
 
-class _RegisterScreenState
-    extends State<RegisterScreen> {
+class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
 
   final _nameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
-  final _confirmPasswordCtrl =
-  TextEditingController();
+  final _confirmPasswordCtrl = TextEditingController();
 
-  final LocalStorageService _storage =
-      LocalStorageService.instance;
+  final LocalStorageService _storage = LocalStorageService.instance;
 
   bool _hidePassword = true;
   bool _hideConfirmPassword = true;
@@ -77,14 +74,9 @@ class _RegisterScreenState
       return 'Please enter your phone number.';
     }
 
-    final phone = value.replaceAll(
-      RegExp(r'[\s-]'),
-      '',
-    );
+    final phone = value.replaceAll(RegExp(r'[\s-]'), '');
 
-    final phonePattern = RegExp(
-      r'^(?:\+?60|0)(?:11[0-9]{8}|1[0-9]{7,8})$',
-    );
+    final phonePattern = RegExp(r'^(?:\+?60|0)(?:11[0-9]{8}|1[0-9]{7,8})$');
 
     if (!phonePattern.hasMatch(phone)) {
       return 'Please enter a valid Malaysian phone number.';
@@ -93,9 +85,7 @@ class _RegisterScreenState
     return null;
   }
 
-  String? _validateConfirmPassword(
-      String? value,
-      ) {
+  String? _validateConfirmPassword(String? value) {
     if (value == null || value.isEmpty) {
       return 'Please confirm your password.';
     }
@@ -108,8 +98,7 @@ class _RegisterScreenState
   }
 
   Future<void> _register() async {
-    final formIsValid =
-    _formKey.currentState!.validate();
+    final formIsValid = _formKey.currentState!.validate();
 
     setState(() {
       _showTermsError = !_acceptedTerms;
@@ -128,12 +117,9 @@ class _RegisterScreenState
     });
 
     try {
-      final email = _emailCtrl.text
-          .trim()
-          .toLowerCase();
+      final email = _emailCtrl.text.trim().toLowerCase();
 
-      final alreadyRegistered =
-      await _storage.emailExists(email);
+      final alreadyRegistered = await _storage.emailExists(email);
 
       if (!mounted) {
         return;
@@ -146,9 +132,7 @@ class _RegisterScreenState
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'An account already exists with this email.',
-            ),
+            content: Text('An account already exists with this email.'),
           ),
         );
 
@@ -170,8 +154,7 @@ class _RegisterScreenState
         _registering = false;
       });
 
-      final returnToLogin =
-      await showDialog<bool>(
+      final returnToLogin = await showDialog<bool>(
         context: context,
         barrierDismissible: false,
         builder: (dialogContext) {
@@ -181,25 +164,19 @@ class _RegisterScreenState
               color: AppTheme.primaryBlue,
               size: 48,
             ),
-            title: const Text(
-              'Account Created',
-            ),
+            title: const Text('Account Created'),
             content: const Text(
               'Your account has been created successfully. '
-                  'You can now log in using your email and password.',
+              'You can now log in using your email and password.',
               textAlign: TextAlign.center,
             ),
+            actionsAlignment: MainAxisAlignment.center,
             actions: [
               FilledButton(
                 onPressed: () {
-                  Navigator.pop(
-                    dialogContext,
-                    true,
-                  );
+                  Navigator.pop(dialogContext, true);
                 },
-                child: const Text(
-                  'Return to Login',
-                ),
+                child: const Text('Return to Login'),
               ),
             ],
           );
@@ -223,11 +200,7 @@ class _RegisterScreenState
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Unable to create account: $error',
-          ),
-        ),
+        SnackBar(content: Text('Unable to create account: $error')),
       );
     }
   }
@@ -238,24 +211,16 @@ class _RegisterScreenState
       appBar: AppBar(
         title: const Text(
           'Create Account',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(
-            20,
-            16,
-            20,
-            32,
-          ),
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
           child: Form(
             key: _formKey,
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
                   'Register',
@@ -270,9 +235,7 @@ class _RegisterScreenState
 
                 const Text(
                   'Create an account to save your transport preferences and journeys.',
-                  style: TextStyle(
-                    color: AppTheme.secondaryText,
-                  ),
+                  style: TextStyle(color: AppTheme.secondaryText),
                 ),
 
                 const SizedBox(height: 28),
@@ -280,18 +243,13 @@ class _RegisterScreenState
                 TextFormField(
                   controller: _nameCtrl,
                   enabled: !_registering,
-                  textCapitalization:
-                  TextCapitalization.words,
-                  textInputAction:
-                  TextInputAction.next,
-                  autofillHints: const [
-                    AutofillHints.name,
-                  ],
+                  textCapitalization: TextCapitalization.words,
+                  textInputAction: TextInputAction.next,
+                  autofillHints: const [AutofillHints.name],
                   decoration: const InputDecoration(
                     labelText: 'Full Name',
                     hintText: 'Enter your full name',
-                    prefixIcon:
-                    Icon(Icons.person_outline),
+                    prefixIcon: Icon(Icons.person_outline),
                   ),
                   validator: _validateName,
                 ),
@@ -301,18 +259,13 @@ class _RegisterScreenState
                 TextFormField(
                   controller: _emailCtrl,
                   enabled: !_registering,
-                  keyboardType:
-                  TextInputType.emailAddress,
-                  textInputAction:
-                  TextInputAction.next,
-                  autofillHints: const [
-                    AutofillHints.email,
-                  ],
+                  keyboardType: TextInputType.emailAddress,
+                  textInputAction: TextInputAction.next,
+                  autofillHints: const [AutofillHints.email],
                   decoration: const InputDecoration(
                     labelText: 'Email Address',
                     hintText: 'name@example.com',
-                    prefixIcon:
-                    Icon(Icons.email_outlined),
+                    prefixIcon: Icon(Icons.email_outlined),
                   ),
                   validator: _validateEmail,
                 ),
@@ -323,21 +276,15 @@ class _RegisterScreenState
                   controller: _phoneCtrl,
                   enabled: !_registering,
                   keyboardType: TextInputType.phone,
-                  textInputAction:
-                  TextInputAction.next,
-                  autofillHints: const [
-                    AutofillHints.telephoneNumber,
-                  ],
+                  textInputAction: TextInputAction.next,
+                  autofillHints: const [AutofillHints.telephoneNumber],
                   inputFormatters: [
-                    FilteringTextInputFormatter.allow(
-                      RegExp(r'[0-9+\-\s]'),
-                    ),
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9+\-\s]')),
                   ],
                   decoration: const InputDecoration(
                     labelText: 'Phone Number',
                     hintText: '+60 12-345 6789',
-                    prefixIcon:
-                    Icon(Icons.phone_outlined),
+                    prefixIcon: Icon(Icons.phone_outlined),
                   ),
                   validator: _validatePhone,
                 ),
@@ -348,35 +295,28 @@ class _RegisterScreenState
                   controller: _passwordCtrl,
                   enabled: !_registering,
                   obscureText: _hidePassword,
-                  textInputAction:
-                  TextInputAction.next,
-                  autofillHints: const [
-                    AutofillHints.newPassword,
-                  ],
+                  textInputAction: TextInputAction.next,
+                  autofillHints: const [AutofillHints.newPassword],
                   decoration: InputDecoration(
                     labelText: 'Password',
                     helperText: passwordRequirements,
                     helperMaxLines: 5,
                     errorMaxLines: 3,
-                    hintText:
-                    'At least 8 characters',
-                    prefixIcon:
-                    const Icon(Icons.lock_outline),
+                    hintText: 'At least 8 characters',
+                    prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
                       tooltip: _hidePassword
                           ? 'Show password'
                           : 'Hide password',
                       onPressed: () {
                         setState(() {
-                          _hidePassword =
-                          !_hidePassword;
+                          _hidePassword = !_hidePassword;
                         });
                       },
                       icon: Icon(
                         _hidePassword
                             ? Icons.visibility_outlined
-                            : Icons
-                            .visibility_off_outlined,
+                            : Icons.visibility_off_outlined,
                       ),
                     ),
                   ),
@@ -388,39 +328,32 @@ class _RegisterScreenState
                 TextFormField(
                   controller: _confirmPasswordCtrl,
                   enabled: !_registering,
-                  obscureText:
-                  _hideConfirmPassword,
-                  textInputAction:
-                  TextInputAction.done,
+                  obscureText: _hideConfirmPassword,
+                  textInputAction: TextInputAction.done,
                   onFieldSubmitted: (_) {
                     _register();
                   },
                   decoration: InputDecoration(
                     labelText: 'Confirm Password',
-                    hintText:
-                    'Enter your password again',
-                    prefixIcon:
-                    const Icon(Icons.lock_outline),
+                    hintText: 'Enter your password again',
+                    prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
                       tooltip: _hideConfirmPassword
                           ? 'Show password'
                           : 'Hide password',
                       onPressed: () {
                         setState(() {
-                          _hideConfirmPassword =
-                          !_hideConfirmPassword;
+                          _hideConfirmPassword = !_hideConfirmPassword;
                         });
                       },
                       icon: Icon(
                         _hideConfirmPassword
                             ? Icons.visibility_outlined
-                            : Icons
-                            .visibility_off_outlined,
+                            : Icons.visibility_off_outlined,
                       ),
                     ),
                   ),
-                  validator:
-                  _validateConfirmPassword,
+                  validator: _validateConfirmPassword,
                 ),
 
                 const SizedBox(height: 14),
@@ -428,37 +361,29 @@ class _RegisterScreenState
                 CheckboxListTile(
                   value: _acceptedTerms,
                   contentPadding: EdgeInsets.zero,
-                  controlAffinity:
-                  ListTileControlAffinity.leading,
+                  controlAffinity: ListTileControlAffinity.leading,
                   title: const Text(
                     'I agree to the Terms of Service '
-                        'and Privacy Policy.',
+                    'and Privacy Policy.',
                     style: TextStyle(fontSize: 14),
                   ),
                   onChanged: _registering
                       ? null
                       : (value) {
-                    setState(() {
-                      _acceptedTerms =
-                          value ?? false;
-                      _showTermsError = false;
-                    });
-                  },
+                          setState(() {
+                            _acceptedTerms = value ?? false;
+                            _showTermsError = false;
+                          });
+                        },
                 ),
 
                 if (_showTermsError)
                   const Padding(
-                    padding: EdgeInsets.only(
-                      left: 12,
-                      bottom: 8,
-                    ),
+                    padding: EdgeInsets.only(left: 12, bottom: 8),
                     child: Text(
                       'Please accept the Terms of Service '
-                          'and Privacy Policy.',
-                      style: TextStyle(
-                        color: Colors.red,
-                        fontSize: 12,
-                      ),
+                      'and Privacy Policy.',
+                      style: TextStyle(color: Colors.red, fontSize: 12),
                     ),
                   ),
 
@@ -468,54 +393,41 @@ class _RegisterScreenState
                   width: double.infinity,
                   height: 50,
                   child: FilledButton(
-                    onPressed: _registering
-                        ? null
-                        : _register,
+                    onPressed: _registering ? null : _register,
                     child: _registering
                         ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child:
-                      CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
                         : const Text(
-                      'Create Account',
-                      style: TextStyle(
-                        fontWeight:
-                        FontWeight.bold,
-                      ),
-                    ),
+                            'Create Account',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
                   ),
                 ),
 
                 const SizedBox(height: 18),
 
                 Row(
-                  mainAxisAlignment:
-                  MainAxisAlignment.center,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     const Text(
                       'Already have an account?',
-                      style: TextStyle(
-                        color:
-                        AppTheme.secondaryText,
-                      ),
+                      style: TextStyle(color: AppTheme.secondaryText),
                     ),
                     TextButton(
                       onPressed: _registering
                           ? null
                           : () {
-                        Navigator.pop(context);
-                      },
+                              Navigator.pop(context);
+                            },
                       child: const Text(
                         'Log In',
-                        style: TextStyle(
-                          fontWeight:
-                          FontWeight.bold,
-                        ),
+                        style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
                   ],

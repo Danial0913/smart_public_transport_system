@@ -8,6 +8,13 @@ class AccountSettingsException implements Exception {
   String toString() => message;
 }
 
+class LoginAttemptException implements Exception {
+  const LoginAttemptException(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
 abstract interface class AccountSettings {
   ValueListenable<AppUser?> get currentUser;
   Future<void> updateProfile({

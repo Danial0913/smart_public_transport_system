@@ -121,9 +121,14 @@ class PasswordRecoveryService implements PasswordRecovery {
         'The request timed out. Check your connection and try again.',
       );
     } catch (_) {
-      throw const RecoveryException(
-        kDebugMode
-            ? 'Could not reach the recovery service. Keep this phone connected by USB and run backend/start.ps1 on your computer, then try again.'
+      final localServer = const {
+        '127.0.0.1',
+        'localhost',
+        '10.0.2.2',
+      }.contains(Uri.tryParse(baseUrl)?.host);
+      throw RecoveryException(
+        kDebugMode && localServer
+            ? 'Could not reach the local recovery server. This development build needs a server running on the connected computer. Shared builds need a public HTTPS recovery server.'
             : 'Could not reach the recovery service. Please try again.',
       );
     }

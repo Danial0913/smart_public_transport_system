@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../data/account_settings.dart';
 import '../data/local_storage_service.dart';
 import '../theme/app_theme.dart';
 import 'dashboard_screen.dart';
@@ -21,8 +22,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
 
-  final LocalStorageService _storage =
-      LocalStorageService.instance;
+  final LocalStorageService _storage = LocalStorageService.instance;
 
   bool _hidePassword = true;
   bool _loggingIn = false;
@@ -39,9 +39,7 @@ class _LoginScreenState extends State<LoginScreen> {
       return 'Please enter your email address.';
     }
 
-    final emailPattern = RegExp(
-      r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
-    );
+    final emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
 
     if (!emailPattern.hasMatch(value.trim())) {
       return 'Please enter a valid email address.';
@@ -87,11 +85,7 @@ class _LoginScreenState extends State<LoginScreen> {
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Incorrect email address or password.',
-            ),
-          ),
+          const SnackBar(content: Text('Incorrect email address or password.')),
         );
 
         return;
@@ -109,6 +103,14 @@ class _LoginScreenState extends State<LoginScreen> {
           },
         ),
       );
+    } on LoginAttemptException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loggingIn = false;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
     } catch (error) {
       if (!mounted) {
         return;
@@ -118,17 +120,14 @@ class _LoginScreenState extends State<LoginScreen> {
         _loggingIn = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Unable to log in: $error'),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Unable to log in: $error')));
     }
   }
 
   Future<void> _openRegisterScreen() async {
-    final registeredEmail =
-    await Navigator.push<String>(
+    final registeredEmail = await Navigator.push<String>(
       context,
       MaterialPageRoute(
         builder: (context) {
@@ -146,9 +145,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text(
-          'Account created. Enter your password to log in.',
-        ),
+        content: Text('Account created. Enter your password to log in.'),
       ),
     );
   }
@@ -169,14 +166,11 @@ class _LoginScreenState extends State<LoginScreen> {
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 20,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Form(
             key: _formKey,
             child: Column(
-              crossAxisAlignment:
-              CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const SizedBox(height: 60),
 
@@ -186,8 +180,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     height: 70,
                     decoration: BoxDecoration(
                       color: AppTheme.primaryBlue,
-                      borderRadius:
-                      BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(16),
                     ),
                     child: const Icon(
                       Icons.directions_transit,
@@ -212,10 +205,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 const Text(
                   'Log in to continue your journey.',
-                  style: TextStyle(
-                    color: AppTheme.secondaryText,
-                    fontSize: 14,
-                  ),
+                  style: TextStyle(color: AppTheme.secondaryText, fontSize: 14),
                 ),
 
                 const SizedBox(height: 28),
@@ -223,18 +213,13 @@ class _LoginScreenState extends State<LoginScreen> {
                 TextFormField(
                   controller: _emailCtrl,
                   enabled: !_loggingIn,
-                  keyboardType:
-                  TextInputType.emailAddress,
-                  textInputAction:
-                  TextInputAction.next,
-                  autofillHints: const [
-                    AutofillHints.email,
-                  ],
+                  keyboardType: TextInputType.emailAddress,
+                  textInputAction: TextInputAction.next,
+                  autofillHints: const [AutofillHints.email],
                   decoration: const InputDecoration(
                     labelText: 'Email Address',
                     hintText: 'name@example.com',
-                    prefixIcon:
-                    Icon(Icons.email_outlined),
+                    prefixIcon: Icon(Icons.email_outlined),
                   ),
                   validator: _validateEmail,
                 ),
@@ -245,34 +230,28 @@ class _LoginScreenState extends State<LoginScreen> {
                   controller: _passwordCtrl,
                   enabled: !_loggingIn,
                   obscureText: _hidePassword,
-                  textInputAction:
-                  TextInputAction.done,
-                  autofillHints: const [
-                    AutofillHints.password,
-                  ],
+                  textInputAction: TextInputAction.done,
+                  autofillHints: const [AutofillHints.password],
                   onFieldSubmitted: (_) {
                     _login();
                   },
                   decoration: InputDecoration(
                     labelText: 'Password',
                     hintText: 'Enter your password',
-                    prefixIcon:
-                    const Icon(Icons.lock_outline),
+                    prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
                       tooltip: _hidePassword
                           ? 'Show password'
                           : 'Hide password',
                       onPressed: () {
                         setState(() {
-                          _hidePassword =
-                          !_hidePassword;
+                          _hidePassword = !_hidePassword;
                         });
                       },
                       icon: Icon(
                         _hidePassword
                             ? Icons.visibility_outlined
-                            : Icons
-                            .visibility_off_outlined,
+                            : Icons.visibility_off_outlined,
                       ),
                     ),
                   ),
@@ -284,12 +263,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 Align(
                   alignment: Alignment.centerRight,
                   child: TextButton(
-                    onPressed: _loggingIn
-                        ? null
-                        : _openForgotPasswordScreen,
-                    child: const Text(
-                      'Forgot Password?',
-                    ),
+                    onPressed: _loggingIn ? null : _openForgotPasswordScreen,
+                    child: const Text('Forgot Password?'),
                   ),
                 ),
 
@@ -299,51 +274,37 @@ class _LoginScreenState extends State<LoginScreen> {
                   width: double.infinity,
                   height: 50,
                   child: FilledButton(
-                    onPressed:
-                    _loggingIn ? null : _login,
+                    onPressed: _loggingIn ? null : _login,
                     child: _loggingIn
                         ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child:
-                      CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
                         : const Text(
-                      'Log In',
-                      style: TextStyle(
-                        fontWeight:
-                        FontWeight.bold,
-                      ),
-                    ),
+                            'Log In',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
                   ),
                 ),
 
                 const SizedBox(height: 28),
 
                 Row(
-                  mainAxisAlignment:
-                  MainAxisAlignment.center,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     const Text(
                       'Do not have an account?',
-                      style: TextStyle(
-                        color:
-                        AppTheme.secondaryText,
-                      ),
+                      style: TextStyle(color: AppTheme.secondaryText),
                     ),
                     TextButton(
-                      onPressed: _loggingIn
-                          ? null
-                          : _openRegisterScreen,
+                      onPressed: _loggingIn ? null : _openRegisterScreen,
                       child: const Text(
                         'Register',
-                        style: TextStyle(
-                          fontWeight:
-                          FontWeight.bold,
-                        ),
+                        style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),
                   ],
