@@ -10,12 +10,22 @@ import '../data/local_storage_service.dart';
 import '../data/transit_repository.dart';
 import '../models/transit_models.dart';
 import '../theme/app_theme.dart';
+import '../data/geocoding_service.dart';
+import '../data/location_service.dart';
 
 class TransitMapScreen extends StatefulWidget {
-  const TransitMapScreen({super.key, this.journey, this.onJourneyEnded});
+  const TransitMapScreen({
+    super.key,
+    this.journey,
+    this.initialRoute,
+    this.onJourneyEnded,
+    this.onRouteCleared,
+  });
 
   final JourneyOption? journey;
+  final TransitRoute? initialRoute;
   final VoidCallback? onJourneyEnded;
+  final VoidCallback? onRouteCleared;
 
   @override
   State<TransitMapScreen> createState() => _TransitMapScreenState();
@@ -23,13 +33,14 @@ class TransitMapScreen extends StatefulWidget {
 
 class _TransitMapScreenState extends State<TransitMapScreen> {
   final TransitRepository _repository = TransitRepository.instance;
+  final GeocodingService _geocodingService = GeocodingService();
   final LocalStorageService _storage = LocalStorageService.instance;
   final MapController _mapController = MapController();
   final TextEditingController _searchCtrl = TextEditingController();
   final Location _location = Location();
   final ValueNotifier<int> _searchVersion = ValueNotifier<int>(0);
   final RegExp _searchSpaces = RegExp(r'\s+');
-
+  final Set<String> _favouriteRouteIds = {};
   StreamSubscription<LocationData>? _locationSubscription;
   Timer? _searchDebounce;
   Timer? _mapCameraDebounce;
@@ -43,10 +54,12 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   bool _followUserLocation = true;
   bool _loadingMapArea = false;
   bool _savingCompletedJourney = false;
-
+  bool _savingFavourite = false;
+  bool _findingMapName = false;
   String? _error;
   String _selectedMode = 'All';
-
+  String? _selectedMapName;
+  LatLng? _selectedMapPoint;
   TransitStop? _selectedStop;
   TransitRoute? _selectedRoute;
   JourneyOption? _activeJourney;
@@ -79,7 +92,9 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
   void initState() {
     super.initState();
     _activeJourney = widget.journey;
+    _selectedRoute = widget.initialRoute;
     _loadTransitData();
+    _loadFavouriteRoutes();
   }
 
   @override
@@ -90,6 +105,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     if (journey == null || oldWidget.journey?.id == journey.id) return;
 
     setState(() {
+      _clearMapPointSelection();
       _activeJourney = journey;
       _selectedStop = null;
       _selectedRoute = null;
@@ -228,6 +244,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
   void _selectMode(String mode) {
     setState(() {
+      _clearMapPointSelection();
       _activeJourney = null;
       _selectedMode = mode;
       _selectedStop = null;
@@ -336,7 +353,64 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     _showSuggestions = false;
     _searchVersion.value++;
   }
+  Future<void> _selectMapPoint(
+      LatLng point,
+      ) async {
+    if (_activeJourney != null) {
+      _showMessage(
+        'Close the active journey before selecting a map location.',
+      );
+      return;
+    }
 
+    if (!LocationService.isInsideMalaysia(
+      point.latitude,
+      point.longitude,
+    )) {
+      _showMessage(
+        'Please select a location inside Malaysia.',
+      );
+      return;
+    }
+
+    setState(() {
+      _selectedMapPoint = point;
+      _selectedMapName = null;
+      _findingMapName = true;
+      _selectedStop = null;
+      _selectedRoute = null;
+      _followUserLocation = false;
+    });
+
+    widget.onRouteCleared?.call();
+
+    final placeName =
+    await _geocodingService.getPlaceName(
+      point.latitude,
+      point.longitude,
+    );
+
+    if (!mounted) return;
+
+    final selectedPoint = _selectedMapPoint;
+
+    if (selectedPoint == null ||
+        selectedPoint.latitude != point.latitude ||
+        selectedPoint.longitude != point.longitude) {
+      return;
+    }
+
+    setState(() {
+      _selectedMapName =
+          placeName ?? 'Location name unavailable';
+      _findingMapName = false;
+    });
+  }
+  void _clearMapPointSelection() {
+    _selectedMapPoint = null;
+    _selectedMapName = null;
+    _findingMapName = false;
+  }
   void _onMapReady() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -346,8 +420,11 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       _refreshVisibleMapContent(camera);
 
       final journey = _activeJourney;
+      final route = _selectedRoute;
       if (journey != null) {
         _focusJourney(journey);
+      } else if (route != null) {
+        _focusRoute(route);
       }
     });
   }
@@ -554,6 +631,26 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     return sampled;
   }
 
+  void _focusRoute(TransitRoute route) {
+    final points =
+        _routePointsById[route.id] ?? const <LatLng>[];
+
+    if (points.length < 2) return;
+
+    _mapController.fitCamera(
+      CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(points),
+        padding: const EdgeInsets.fromLTRB(
+          40,
+          70,
+          40,
+          190,
+        ),
+        maxZoom: 15,
+      ),
+    );
+  }
+
   void _focusJourney(JourneyOption journey) {
     final points = <LatLng>[
       LatLng(
@@ -588,6 +685,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     FocusScope.of(context).unfocus();
 
     setState(() {
+      _clearMapPointSelection();
       _activeJourney = null;
       _searchCtrl.text = stop.name;
       _selectedStop = stop;
@@ -641,10 +739,159 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     _showMessage('No matching station, stop, or route found.');
   }
 
+  Future<void> _loadFavouriteRoutes() async {
+    try {
+      final favourites = await _storage.getFavourites();
+
+      final routeIds = favourites
+          .where((favourite) {
+        return favourite.type == 'Route';
+      })
+          .map((favourite) {
+        return favourite.referenceId;
+      })
+          .toSet();
+
+      if (!mounted) return;
+
+      setState(() {
+        _favouriteRouteIds
+          ..clear()
+          ..addAll(routeIds);
+      });
+    } catch (error) {
+      if (mounted) {
+        _showMessage('Unable to load favourites.');
+      }
+    }
+  }
+  Future<void> _toggleRouteFavourite(
+      TransitRoute route,
+      ) async {
+    if (_savingFavourite) return;
+
+    setState(() {
+      _savingFavourite = true;
+    });
+
+    try {
+      final favourites = await _storage.getFavourites();
+
+      FavouriteItem? existingFavourite;
+
+      for (final favourite in favourites) {
+        if (favourite.type == 'Route' &&
+            favourite.referenceId == route.id) {
+          existingFavourite = favourite;
+          break;
+        }
+      }
+
+      if (existingFavourite != null) {
+        await _storage.deleteFavourite(
+          existingFavourite.id,
+        );
+
+        if (!mounted) return;
+
+        setState(() {
+          _favouriteRouteIds.remove(route.id);
+        });
+
+        _showMessage(
+          'Route ${route.number} removed from favourites.',
+        );
+
+        return;
+      }
+
+      final categories =
+      await _storage.getFavouriteCategories();
+
+      if (!mounted) return;
+
+      if (categories.isEmpty) {
+        _showMessage(
+          'No favourite category is available.',
+        );
+        return;
+      }
+
+      final selectedCategory =
+      await showDialog<FavouriteCategory>(
+        context: context,
+        builder: (dialogContext) {
+          return SimpleDialog(
+            title: const Text('Select a category'),
+            children: categories.map((category) {
+              return SimpleDialogOption(
+                onPressed: () {
+                  Navigator.pop(
+                    dialogContext,
+                    category,
+                  );
+                },
+                child: ListTile(
+                  leading: CircleAvatar(
+                    radius: 10,
+                    backgroundColor:
+                    Color(category.colourValue),
+                  ),
+                  title: Text(category.name),
+                ),
+              );
+            }).toList(),
+          );
+        },
+      );
+
+      if (selectedCategory == null || !mounted) {
+        return;
+      }
+
+      final favourite = FavouriteItem(
+        id: 'favourite-'
+            '${DateTime.now().microsecondsSinceEpoch}',
+        title: route.number,
+        subtitle: route.name,
+        type: 'Route',
+        referenceId: route.id,
+        categoryId: selectedCategory.id,
+        createdAt: DateTime.now(),
+      );
+
+      await _storage.addFavourite(favourite);
+
+      if (!mounted) return;
+
+      setState(() {
+        _favouriteRouteIds.add(route.id);
+      });
+
+      _showMessage(
+        'Route ${route.number} saved to '
+            '${selectedCategory.name}.',
+      );
+    } catch (error) {
+      if (mounted) {
+        _showMessage(
+          'Unable to update this favourite.',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingFavourite = false;
+        });
+      }
+    }
+  }
+
   void _showRoute(TransitRoute route) {
     final stops = _repository.stopsForRoute(route);
 
     setState(() {
+      _clearMapPointSelection();
       _activeJourney = null;
       _selectedRoute = route;
       _selectedStop = null;
@@ -656,14 +903,19 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
 
       _mapController.move(LatLng(firstStop.latitude, firstStop.longitude), 11);
     }
+    if (_mapReady) {
+      _focusRoute(route);
+    }
   }
 
   void _showAllRoutes() {
     setState(() {
+      _clearMapPointSelection();
       _activeJourney = null;
       _selectedRoute = null;
       _selectedStop = null;
     });
+    widget.onRouteCleared?.call();
     if (_mapReady) {
       _refreshVisibleMapContent(_mapController.camera);
     }
@@ -1006,6 +1258,8 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
             maxZoom: 19,
             onMapReady: _onMapReady,
             onPositionChanged: _onMapPositionChanged,
+            onTap: (tapPosition, point) {_selectMapPoint(point);
+            },
           ),
           children: [
             TileLayer(
@@ -1028,6 +1282,9 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
               ),
             MarkerLayer(
               markers: _buildJourneyEndpointMarkers(),
+            ),
+            MarkerLayer(
+              markers: _buildSelectedMapPointMarkers(),
             ),
             MarkerLayer(
               markers: _buildCurrentLocationMarkers(),
@@ -1114,12 +1371,35 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
             ],
           ),
         ),
+        if (_selectedMapPoint != null &&
+            _selectedStop == null &&
+            _selectedRoute == null &&
+            _activeJourney == null)
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 12,
+            child: _buildMapPointInformation(),
+          ),
         if (_selectedStop != null)
           Positioned(
             left: 12,
             right: 12,
             bottom: 12,
-            child: _buildStopInformation(_selectedStop!),
+            child: _buildStopInformation(
+              _selectedStop!,
+            ),
+          ),
+        if (_selectedStop == null &&
+            _selectedRoute != null &&
+            _activeJourney == null)
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 12,
+            child: _buildRouteInformation(
+              _selectedRoute!,
+            ),
           ),
         if (_selectedStop == null &&
             _selectedRoute == null &&
@@ -1192,6 +1472,33 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
         ),
       ),
     );
+  }
+
+  List<Marker> _buildSelectedMapPointMarkers() {
+    final point = _selectedMapPoint;
+
+    if (point == null) {
+      return [];
+    }
+
+    return [
+      Marker(
+        point: point,
+        width: 52,
+        height: 52,
+        child: Tooltip(
+          message: _findingMapName
+              ? 'Finding location...'
+              : _selectedMapName ??
+              'Selected location',
+          child: const Icon(
+            Icons.location_pin,
+            color: Colors.red,
+            size: 48,
+          ),
+        ),
+      ),
+    ];
   }
 
   List<Marker> _buildJourneyStationMarkers() {
@@ -1547,9 +1854,6 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
         budgetExceededAmount =
         await _getBudgetExceededAmount();
       } catch (_) {
-        // The journey was saved successfully.
-        // A budget-checking problem should not
-        // report that the journey failed to save.
         budgetExceededAmount = null;
       }
 
@@ -1826,7 +2130,69 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
       side: BorderSide(color: colour.withValues(alpha: 0.35)),
     );
   }
+  Widget _buildMapPointInformation() {
+    final point = _selectedMapPoint!;
 
+    final name = _findingMapName
+        ? 'Finding location...'
+        : _selectedMapName ??
+        'Selected location';
+
+    return _buildInformationCard(
+      icon: Icons.location_pin,
+      colour: Colors.red,
+      title: name,
+      subtitle:
+      '${point.latitude.toStringAsFixed(6)}, '
+          '${point.longitude.toStringAsFixed(6)}',
+      onClose: () {
+        setState(() {
+          _clearMapPointSelection();
+        });
+      },
+      children: [
+        Row(
+          children: [
+            const SizedBox(
+              width: 85,
+              child: Text(
+                'Latitude',
+                style: TextStyle(
+                  color: AppTheme.secondaryText,
+                ),
+              ),
+            ),
+            Text(
+              point.latitude.toStringAsFixed(6),
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            const SizedBox(
+              width: 85,
+              child: Text(
+                'Longitude',
+                style: TextStyle(
+                  color: AppTheme.secondaryText,
+                ),
+              ),
+            ),
+            Text(
+              point.longitude.toStringAsFixed(6),
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
   Widget _buildStopInformation(TransitStop stop) {
     final routes = _routesForStop(stop);
     final modes = routes.map((route) => route.mode).toSet();
@@ -1920,7 +2286,7 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
     final stops = _repository.stopsForRoute(route);
     final firstStop = stops.isEmpty ? 'Unknown' : stops.first.name;
     final lastStop = stops.isEmpty ? 'Unknown' : stops.last.name;
-
+    final isFavourite = _favouriteRouteIds.contains(route.id);
     return _buildInformationCard(
       icon: _iconForMode(route.mode),
       colour: _routeColour(route.colourHex),
@@ -1968,6 +2334,43 @@ class _TransitMapScreenState extends State<TransitMapScreen> {
                 label: Text('Accessible'),
               ),
           ],
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: isFavourite
+                  ? Colors.red.shade700
+                  : AppTheme.primaryBlue,
+            ),
+            onPressed: _savingFavourite
+                ? null
+                : () {
+              _toggleRouteFavourite(route);
+            },
+            icon: _savingFavourite
+                ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+                : Icon(
+              isFavourite
+                  ? Icons.bookmark_remove
+                  : Icons.bookmark_add_outlined,
+            ),
+            label: Text(
+              _savingFavourite
+                  ? 'Updating...'
+                  : isFavourite
+                  ? 'Remove Favourite'
+                  : 'Save to Favourite',
+            ),
+          ),
         ),
       ],
     );
