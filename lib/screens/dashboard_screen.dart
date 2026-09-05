@@ -880,8 +880,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
             ),
-      // Only create the screen that the user opens. This prevents the map,
-      // planner and history screens from loading while they are hidden.
       body: _buildSelectedPage(),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,

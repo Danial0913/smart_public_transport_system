@@ -2281,10 +2281,19 @@ String _formatTime(DateTime value) {
 
 String _feeText(JourneyOption option) {
   final officialFee = option.knownTotalFare;
-  if (officialFee == null) {
-    return 'Fee unavailable';
+  if (officialFee != null) {
+    return 'Fee RM ${officialFee.toStringAsFixed(2)}';
   }
-  return 'Fee RM ${officialFee.toStringAsFixed(2)}';
+  final canEstimateFare = option.legs.every((leg) {
+    return leg.knownFare != null ||
+        (leg.route.sourceId == 'rapid-penang' &&
+            leg.route.mode == 'Bus');
+  });
+  if (canEstimateFare) {
+    return 'Estimated fee RM '
+        '${option.totalFare.toStringAsFixed(2)}';
+  }
+  return 'Fee unavailable';
 }
 
 IconData _modeIcon(String mode) {

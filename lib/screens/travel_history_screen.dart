@@ -17,11 +17,24 @@ class TravelHistoryScreen extends StatefulWidget {
 
 class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
   final LocalStorageService _storage = LocalStorageService.instance;
-
   final List<String> _periods = const ['Today', 'This Week', 'This Month'];
 
   String _selectedPeriod = 'This Month';
-
+  DateTime? _selectedMonth;
+  final List<String> _monthNames = const [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
   List<CompletedJourney> _journeys = [];
 
   bool _loading = true;
@@ -44,23 +57,61 @@ class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
 
     try {
       final now = DateTime.now();
-      final periodStart = _periodStart(now);
+
+      final DateTime periodStart;
+      final DateTime periodEnd;
+
+      if (_selectedMonth != null) {
+        periodStart = DateTime(
+          _selectedMonth!.year,
+          _selectedMonth!.month,
+        );
+
+        periodEnd = DateTime(
+          _selectedMonth!.year,
+          _selectedMonth!.month + 1,
+        );
+      } else {
+        periodStart = _periodStart(now);
+
+        if (_selectedPeriod == 'Today') {
+          periodEnd = DateTime(
+            now.year,
+            now.month,
+            now.day + 1,
+          );
+        } else if (_selectedPeriod == 'This Week') {
+          periodEnd = now.add(const Duration(days: 1));
+        } else {
+          periodEnd = DateTime(now.year, now.month + 1);
+        }
+      }
 
       final journeys = await _storage.getCompletedJourneys(
         start: periodStart,
-        end: now.add(const Duration(days: 1)),
+        end: periodEnd,
       );
 
-      final monthStart = DateTime(now.year, now.month);
+      final budgetMonth = _selectedMonth ?? now;
 
-      final nextMonth = DateTime(now.year, now.month + 1);
+      final monthStart = DateTime(
+        budgetMonth.year,
+        budgetMonth.month,
+      );
+
+      final nextMonth = DateTime(
+        budgetMonth.year,
+        budgetMonth.month + 1,
+      );
 
       final monthJourneys = await _storage.getCompletedJourneys(
         start: monthStart,
         end: nextMonth,
       );
 
-      final budget = await _storage.getMonthlyTravelBudget(now);
+      final budget = await _storage.getMonthlyTravelBudget(
+        budgetMonth,
+      );
 
       var monthSpending = 0.0;
 
@@ -100,6 +151,16 @@ class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
     return DateTime(now.year, now.month);
   }
 
+  String get _selectedPeriodLabel {
+    final selectedMonth = _selectedMonth;
+
+    if (selectedMonth == null) {
+      return _selectedPeriod;
+    }
+
+    return '${_monthNames[selectedMonth.month - 1]} '
+        '${selectedMonth.year}';
+  }
   double get _totalSpending {
     var total = 0.0;
 
@@ -191,14 +252,130 @@ class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
   Future<void> _selectPeriod(String period) async {
     setState(() {
       _selectedPeriod = period;
+      _selectedMonth = null;
     });
 
     await _loadHistory();
   }
+  Future<void> _selectHistoryMonth() async {
+    final now = DateTime.now();
+    final initialMonth = _selectedMonth ?? now;
 
+    var selectedMonthNumber = initialMonth.month;
+    var selectedYear = initialMonth.year;
+
+    final selectedDate = await showDialog<DateTime>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, dialogSetState) {
+            final years = List<int>.generate(
+              10,
+                  (index) => now.year - index,
+            );
+
+            final maximumMonth =
+            selectedYear == now.year ? now.month : 12;
+
+            final months = List<int>.generate(
+              maximumMonth,
+                  (index) => index + 1,
+            );
+
+            return AlertDialog(
+              title: const Text('Select Month'),
+              content: SizedBox(
+                width: 280,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<int>(
+                      value: selectedMonthNumber,
+                      decoration: const InputDecoration(
+                        labelText: 'Month',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: months.map((month) {
+                        return DropdownMenuItem<int>(
+                          value: month,
+                          child: Text(_monthNames[month - 1]),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+
+                        dialogSetState(() {
+                          selectedMonthNumber = value;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<int>(
+                      value: selectedYear,
+                      decoration: const InputDecoration(
+                        labelText: 'Year',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: years.map((year) {
+                        return DropdownMenuItem<int>(
+                          value: year,
+                          child: Text('$year'),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+
+                        dialogSetState(() {
+                          selectedYear = value;
+
+                          if (selectedYear == now.year &&
+                              selectedMonthNumber > now.month) {
+                            selectedMonthNumber = now.month;
+                          }
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(
+                      dialogContext,
+                      DateTime(
+                        selectedYear,
+                        selectedMonthNumber,
+                      ),
+                    );
+                  },
+                  child: const Text('View History'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (selectedDate == null || !mounted) return;
+
+    setState(() {
+      _selectedMonth = selectedDate;
+      _selectedPeriod = 'Selected Month';
+    });
+
+    await _loadHistory();
+  }
   Future<void> _setBudget() async {
     final budgetFormKey = GlobalKey<FormState>();
-
+    final budgetMonth = _selectedMonth ?? DateTime.now();
     var budgetText =
         _monthlyBudget?.toStringAsFixed(2) ?? '';
 
@@ -280,7 +457,7 @@ class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
 
     try {
       await _storage.setMonthlyTravelBudget(
-        month: DateTime.now(),
+        month: budgetMonth,
         amount: amount,
       );
 
@@ -436,24 +613,49 @@ class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
   }
 
   Widget _buildPeriodSelector() {
+    final periodWidgets = <Widget>[];
+
+    for (final period in _periods) {
+      final selected =
+          _selectedMonth == null &&
+              period == _selectedPeriod;
+
+      periodWidgets.add(
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: ChoiceChip(
+            label: Text(period),
+            selected: selected,
+            onSelected: (_) {
+              _selectPeriod(period);
+            },
+          ),
+        ),
+      );
+    }
+
+    final selectedMonthText = _selectedMonth == null
+        ? 'Select Month'
+        : '${_monthNames[_selectedMonth!.month - 1]} '
+        '${_selectedMonth!.year}';
+
+    periodWidgets.add(
+      ChoiceChip(
+        avatar: const Icon(
+          Icons.calendar_month_outlined,
+          size: 18,
+        ),
+        label: Text(selectedMonthText),
+        selected: _selectedMonth != null,
+        onSelected: (_) {
+          _selectHistoryMonth();
+        },
+      ),
+    );
+
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      child: Row(
-        children: _periods.map((period) {
-          final selected = period == _selectedPeriod;
-
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ChoiceChip(
-              label: Text(period),
-              selected: selected,
-              onSelected: (_) {
-                _selectPeriod(period);
-              },
-            ),
-          );
-        }).toList(),
-      ),
+      child: Row(children: periodWidgets),
     );
   }
 
@@ -644,7 +846,7 @@ class _TravelHistoryScreenState extends State<TravelHistoryScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Spending for $_selectedPeriod',
+              'Spending for $_selectedPeriodLabel',
               style: const TextStyle(color: AppTheme.secondaryText),
             ),
             const SizedBox(height: 18),
