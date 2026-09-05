@@ -143,8 +143,6 @@ class LocalStorageService implements AccountSettings, TravelSettings {
           );
         }
         if (oldVersion < 7) {
-          // GTFS snapshots are bundled JSON assets now, so downloaded cache
-          // rows are obsolete and only consume device storage.
           await database.execute('DROP TABLE IF EXISTS gtfs_cache_chunks');
           await database.execute('DROP TABLE IF EXISTS gtfs_cache');
         }
@@ -700,7 +698,6 @@ class LocalStorageService implements AccountSettings, TravelSettings {
     }
   }
 
-  // Record a completed journey
   Future<void> recordCompletedJourney(JourneyOption journey) async {
     final user = _signedInUser();
     final database = await _db;
@@ -737,7 +734,6 @@ class LocalStorageService implements AccountSettings, TravelSettings {
     });
   }
 
-  // Get completed journeys
   Future<List<CompletedJourney>> getCompletedJourneys({
     DateTime? start,
     DateTime? end,
@@ -804,14 +800,12 @@ class LocalStorageService implements AccountSettings, TravelSettings {
     return journeys;
   }
 
-  // Convert a date into a monthly database key
   String _monthKey(DateTime month) {
     final monthNumber = month.month.toString().padLeft(2, '0');
 
     return '${month.year}-$monthNumber';
   }
 
-  // Get the monthly transport budget
   Future<double?> getMonthlyTravelBudget(DateTime month) async {
     final user = _signedInUser();
     final database = await _db;
@@ -830,7 +824,6 @@ class LocalStorageService implements AccountSettings, TravelSettings {
     return (rows.first['amount'] as num).toDouble();
   }
 
-  // Save or update the monthly transport budget
   Future<void> setMonthlyTravelBudget({
     required DateTime month,
     required double amount,
@@ -845,7 +838,6 @@ class LocalStorageService implements AccountSettings, TravelSettings {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  // Delete a completed journey
   Future<void> deleteCompletedJourney(String journeyId) async {
     final user = _signedInUser();
     final database = await _db;
@@ -1282,7 +1274,6 @@ class LocalStorageService implements AccountSettings, TravelSettings {
     );
   }
 
-  /// Called by PasswordRecoveryService only after server-side email verification.
   Future<void> updateRecoveredPassword(String email, String password) async {
     final validation = validateNewPassword(password);
     if (validation != null) throw ArgumentError(validation);

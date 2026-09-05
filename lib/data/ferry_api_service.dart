@@ -34,7 +34,6 @@ class FerryApiService {
     try {
       return await request;
     } catch (_) {
-      // Permit a later retry after a temporary network or server failure.
       _penangRouteLoad = null;
       rethrow;
     }

@@ -5,8 +5,6 @@ class MalaysiaTime {
   static const int serviceStartMinutes = 5 * 60;
   static const int serviceEndMinutes = 23 * 60 + 59;
 
-  /// Returns Malaysia wall-clock time even when an emulator is configured
-  /// with a different system time zone.
   static DateTime now() {
     final malaysia = DateTime.now().toUtc().add(utcOffset);
     return DateTime(

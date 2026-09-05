@@ -182,7 +182,6 @@ class _SupportedStopMapPickerState extends State<SupportedStopMapPicker> {
       setState(() => _availableStops = _repository.stops);
       _refreshVisibleStops(_mapController.camera);
     } catch (_) {
-      // A place can still be selected when an official feed is unavailable.
     } finally {
       _loadingStops = false;
     }

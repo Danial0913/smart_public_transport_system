@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 
 import '../models/accessibility_models.dart';
 
-/// Station-specific facility documentation, separate from live outage status.
 class OfficialAccessibilityCatalog {
   OfficialAccessibilityCatalog._();
 

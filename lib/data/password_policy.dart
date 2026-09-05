@@ -17,7 +17,6 @@ String? validateNewPassword(String? value) {
   if (!RegExp(r'[0-9]').hasMatch(value)) {
     return 'Password must contain at least one number (0–9).';
   }
-  // Printable ASCII punctuation; spaces do not count as special characters.
   if (!RegExp(r'[\x21-\x2F\x3A-\x40\x5B-\x60\x7B-\x7E]').hasMatch(value)) {
     return 'Password must contain at least one special character (such as !, @, or #).';
   }

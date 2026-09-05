@@ -222,8 +222,7 @@ class TransitRepository {
       for (final stopId in route.stopIds) {
         _routesByStopId.putIfAbsent(stopId, () => []).add(route);
       }
-      // Yield in small batches. Yielding after every route caused hundreds of
-      // unnecessary event-loop turns for the larger regional feeds.
+
       if (index > 0 && index % 12 == 0) {
         await Future<void>.delayed(Duration.zero);
       }
@@ -289,11 +288,6 @@ class TransitRepository {
       processed++;
       if (processed % 200 == 0) await Future<void>.delayed(Duration.zero);
     }
-
-    // Official feeds use different stop IDs and often slightly different
-    // names for a bus stop beside a railway station. Connect nearby stops from
-    // different operators so journeys such as Rapid Penang -> KTM -> MyBas or
-    // Rapid KL can be discovered without requiring an explicit GTFS transfer.
     processed = 0;
     for (final stop in _stopsById.values) {
       final routesAtStop = _routesByStopId[stop.id] ?? const <TransitRoute>[];
@@ -463,9 +457,7 @@ class TransitRepository {
     final regionalPathsByFirstRoute = <String, List<List<TransitRoute>>>{};
 
     final drafts = <_JourneyDraft>[];
-    // Give every nearby origin stop a fair chance. Previously the first stop
-    // (often the stop on the wrong side of the road) could fill the global
-    // draft limit before the correct opposite-direction stop was inspected.
+
     const maximumDrafts = 192;
     const maximumDraftsPerOrigin = 12;
     const maximumRouteChecks = 20000;
@@ -562,9 +554,6 @@ class TransitRepository {
         }
 
         if (drafts.length > draftsBeforeThisStopPair) continue;
-
-        // Search the operator graph for longer regional journeys, for example
-        // local bus -> bridge bus -> KTM -> destination bus or rail.
         final finalRouteIds = finalRoutes.map((route) => route.id).toSet();
         for (final firstRoute in firstRoutes) {
           if (drafts.length >= originDraftLimit) break;
@@ -644,10 +633,6 @@ class TransitRepository {
         await Future<void>.delayed(Duration.zero);
       }
     }
-
-    // Nearby boarding platforms can produce several cards with the same
-    // visible service sequence. Show that route combination once and retain
-    // the access path with the shortest total walk.
     final uniqueOptions = <String, JourneyOption>{};
     for (final option in options) {
       final key = _journeyRouteKey(option);
@@ -672,7 +657,7 @@ class TransitRepository {
               ? durationResult
               : a.totalFare.compareTo(b.totalFare);
         case 'Lowest Fee':
-        case 'Lowest Fare': // Backwards compatibility for existing saved plans.
+        case 'Lowest Fare':
           if (a.knownTotalFare == null && b.knownTotalFare != null) return 1;
           if (a.knownTotalFare != null && b.knownTotalFare == null) return -1;
           final fareResult = (a.knownTotalFare ?? double.infinity).compareTo(
@@ -1194,8 +1179,6 @@ class TransitRepository {
           );
           if (!best.departureTime!.isAfter(nextServiceDay)) break;
         } else if (!forward) {
-          // Offsets are inspected newest-first, so once a matching arrival is
-          // found no older service day can improve it.
           break;
         }
       }
@@ -1423,13 +1406,6 @@ class TransitRepository {
 
     candidates.sort((a, b) => a.distanceMetres.compareTo(b.distanceMetres));
 
-    // Keeping only the geographically closest stops can hide the one route
-    // that connects a neighbourhood to the national network. For example,
-    // the eight closest stops in Melor are served by D51/D61, while D62 (the
-    // service that connects to KTM at Gua Musang) is a little farther away.
-    // Keep the closest stops for normal local journeys, then add the nearest
-    // stop for each additional service family. This broadens connectivity
-    // without multiplying every origin/destination stop pair.
     const closestStopCount = 8;
     const maximumDiverseStopCount = 16;
     final selected = candidates.take(closestStopCount).toList();
@@ -1543,8 +1519,7 @@ class TransitRepository {
         (first.totalDurationMinutes - second.totalDurationMinutes).abs();
     final materialDifference = math.max(15, (shorterDuration * 0.15).round());
 
-    // A clearly faster journey should remain the recommended journey. Cost,
-    // transfers and walking decide between alternatives with similar times.
+
     if (durationDifference >= materialDifference) {
       return first.totalDurationMinutes.compareTo(second.totalDurationMinutes);
     }

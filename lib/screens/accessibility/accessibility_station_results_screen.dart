@@ -107,7 +107,6 @@ class _AccessibilityStationResultsScreenState
         _search!.page(offset: _stations.length, limit: _pageSize),
       );
     });
-    // Wait for the new extent before accepting another bottom-of-list event.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _appending = false;
     });

@@ -168,10 +168,6 @@ class TransitServiceCalendar {
     if (weekdays.length != 7) return false;
     final day = DateTime(date.year, date.month, date.day);
     if (startDate != null && day.isBefore(startDate!)) return false;
-    // Bundled GTFS files are snapshots and some operators publish only a
-    // short date window. After that window, keep using the published weekly
-    // pattern so the local planner does not suddenly lose an entire region.
-    // Exact one-off exceptions remain authoritative within their date range.
     return weekdays[day.weekday - 1];
   }
 }

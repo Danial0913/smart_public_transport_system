@@ -206,7 +206,6 @@ class PasswordRecoveryService implements PasswordRecovery {
         'Password recovery could not be verified for this account.',
       );
     }
-    // Never write a password until the server confirms this email's recovery.
     await updatePassword(request.email, password);
   }
 }

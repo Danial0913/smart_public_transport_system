@@ -53,9 +53,6 @@ class AppTheme {
 
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          // Do not force every button to infinite width. Buttons inside a Row
-          // need a finite width. Use SizedBox(width: double.infinity) only on
-          // the individual buttons that should fill the screen.
           minimumSize: const Size(0, 48),
           backgroundColor: primaryBlue,
           foregroundColor: Colors.white,

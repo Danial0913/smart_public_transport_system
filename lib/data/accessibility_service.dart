@@ -5,8 +5,7 @@ import '../models/transit_models.dart';
 import 'official_accessibility_catalog.dart';
 import 'transit_repository.dart';
 
-/// An ordered local stop index. Detailed results are materialized one page at a
-/// time; the underlying transit feed is already loaded by TransitRepository.
+
 class AccessibilityStationSearch {
   AccessibilityStationSearch({
     required List<TransitStop> stops,
@@ -111,9 +110,6 @@ class AccessibilityService {
     await _officialCatalog.load();
     StationAccessibility profile(TransitStop stop) =>
         profileForStop(stop, const []);
-
-    // Scan once for filtering/ranking, retaining only stop references and scores.
-    // Detailed profiles are retained only for requested pages.
     final matches = <(TransitStop, int)>[];
     final normalized = query.trim().toLowerCase();
     for (final stop in _repository.stops) {
@@ -193,7 +189,6 @@ class AccessibilityService {
         : AccessibilityFacilityStatus.unavailable;
     final facilities = <AccessibilityFacility, AccessibilityFacilityStatus>{
       AccessibilityFacility.wheelchairAccess: baseStatus,
-      // Wheelchair boarding does not independently certify a step-free route.
       AccessibilityFacility.stepFreeAccess: AccessibilityFacilityStatus.unknown,
       AccessibilityFacility.lift: AccessibilityFacilityStatus.unknown,
       AccessibilityFacility.accessibleToilet:
@@ -202,7 +197,6 @@ class AccessibilityService {
     final official = _officialCatalog.forStop(stop.id);
     if (official != null) {
       facilities.addAll(official.facilities);
-      // An explicit government boarding field takes priority for that field.
       if (stop.accessibilityKnown) {
         facilities[AccessibilityFacility.wheelchairAccess] = baseStatus;
       }
