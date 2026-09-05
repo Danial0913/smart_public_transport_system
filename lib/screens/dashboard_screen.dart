@@ -48,6 +48,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Key _plannerKey = UniqueKey();
   String? _selectedCategoryId;
   JourneyOption? _activeJourney;
+  TransitRoute? _mapRoute;
   SavedJourney? _autoStartSavedJourney;
   SavedJourney? _activeSavedJourney;
   Set<String> _endedJourneyRunKeys = <String>{};
@@ -380,8 +381,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
     setState(() {
       _activeJourney = option;
+      _mapRoute = null;
       _activeSavedJourney = startingSavedJourney;
       _autoStartSavedJourney = null;
+      _mapKey = UniqueKey();
+      _selectedIndex = 2;
+    });
+  }
+  void _openRouteOnMap(TransitRoute route) {
+    setState(() {
+      _activeJourney = null;
+      _activeSavedJourney = null;
+      _autoStartSavedJourney = null;
+      _mapRoute = route;
       _mapKey = UniqueKey();
       _selectedIndex = 2;
     });
@@ -829,6 +841,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                 ),
               ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _openRouteOnMap(route);
+                    },
+                    icon: const Icon(Icons.map_outlined),
+                    label: const Text('Show Route on Map'),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -907,7 +933,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return TransitMapScreen(
           key: _mapKey,
           journey: _activeJourney,
+          initialRoute: _mapRoute,
           onJourneyEnded: _clearActiveJourney,
+          onRouteCleared: () {
+            if (_mapRoute == null) return;
+            setState(() {
+              _mapRoute = null;
+            });
+          },
         );
       case 3:
         return const TravelHistoryScreen();
