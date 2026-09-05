@@ -23,10 +23,10 @@ const feeds = <String, String>{
 };
 
 void main(List<String> args) {
-  if (args.isEmpty || args.length > 2) {
+  if (args.isEmpty || args.length > 3) {
     stderr.writeln(
       'Usage: dart run tool/convert_gtfs_to_json.dart '
-      '<ZIP directory> [output directory]',
+      '<ZIP directory> [output directory] [source ID]',
     );
     exitCode = 64;
     return;
@@ -40,7 +40,16 @@ void main(List<String> args) {
     return;
   }
 
-  for (final feed in feeds.entries) {
+  final selectedSource = args.length == 3 ? args[2] : null;
+  if (selectedSource != null && !feeds.containsKey(selectedSource)) {
+    stderr.writeln('Unknown source ID: $selectedSource');
+    exitCode = 64;
+    return;
+  }
+
+  for (final feed in feeds.entries.where(
+    (feed) => selectedSource == null || feed.key == selectedSource,
+  )) {
     final zip = File('${input.path}${Platform.pathSeparator}${feed.value}');
     if (!zip.existsSync()) {
       stderr.writeln('Missing ${feed.value}');
@@ -265,6 +274,16 @@ Map<String, dynamic> convertFeed(
     );
   }
 
+  final adultCashFares = parseAdultCashFares(
+    sourceId: sourceId,
+    routes: routes,
+    stopAreasText: optional('stop_areas.txt'),
+    fareMediaText: optional('fare_media.txt'),
+    riderCategoriesText: optional('rider_categories.txt'),
+    fareProductsText: optional('fare_products.txt'),
+    fareLegRulesText: optional('fare_leg_rules.txt'),
+  );
+
   return {
     'metadata': {
       'sourceId': sourceId,
@@ -272,14 +291,137 @@ Map<String, dynamic> convertFeed(
       'source': 'Bundled official Malaysia GTFS snapshot',
       'convertedAt': DateTime.now().toIso8601String(),
       'originalFile': originalFile,
-      'fareNotice': 'Fee is unavailable unless the feed has one clear value.',
+      'fareNotice': adultCashFares.isEmpty
+          ? 'Fee is unavailable unless the feed has one clear value.'
+          : 'Adult cash fees are provided by the official GTFS fare tables.',
     },
     'stops': usedStops.map((id) => stops[id]!).toList(),
     'routes': routes,
     'calendars': calendars,
     'transfers': const <dynamic>[],
+    'adultCashFares': adultCashFares,
   };
 }
+
+Map<String, double> parseAdultCashFares({
+  required String sourceId,
+  required List<Map<String, dynamic>> routes,
+  required String? stopAreasText,
+  required String? fareMediaText,
+  required String? riderCategoriesText,
+  required String? fareProductsText,
+  required String? fareLegRulesText,
+}) {
+  if (stopAreasText == null ||
+      fareProductsText == null ||
+      fareLegRulesText == null) {
+    return const {};
+  }
+
+  var defaultRiderCategory = 'Adult';
+  if (riderCategoriesText != null && riderCategoriesText.trim().isNotEmpty) {
+    final table = CsvTable(riderCategoriesText);
+    for (final row in table.rows) {
+      if (table.value(row, 'is_default_fare_category') == '1') {
+        final id = table.value(row, 'rider_category_id');
+        if (id.isNotEmpty) defaultRiderCategory = id;
+        break;
+      }
+    }
+  }
+
+  var cashMediaId = 'Cash';
+  if (fareMediaText != null && fareMediaText.trim().isNotEmpty) {
+    final table = CsvTable(fareMediaText);
+    for (final row in table.rows) {
+      final name = table.value(row, 'fare_media_name').toLowerCase();
+      if (name.contains('cash')) {
+        final id = table.value(row, 'fare_media_id');
+        if (id.isNotEmpty) cashMediaId = id;
+        break;
+      }
+    }
+  }
+
+  final areaByStopId = <String, String>{};
+  final stopAreaTable = CsvTable(stopAreasText);
+  for (final row in stopAreaTable.rows) {
+    final stopId = stopAreaTable.value(row, 'stop_id');
+    final areaId = stopAreaTable.value(row, 'area_id');
+    if (stopId.isNotEmpty && areaId.isNotEmpty) {
+      areaByStopId[stopId] = areaId;
+    }
+  }
+
+  final neededAreaPairs = <String>{};
+  for (final route in routes) {
+    final stopIds = (route['stopIds'] as List<dynamic>)
+        .cast<String>()
+        .map((id) => id.replaceFirst('$sourceId:', ''))
+        .toList();
+    for (var fromIndex = 0; fromIndex < stopIds.length - 1; fromIndex++) {
+      final fromArea = areaByStopId[stopIds[fromIndex]];
+      if (fromArea == null) continue;
+      for (var toIndex = fromIndex + 1; toIndex < stopIds.length; toIndex++) {
+        final toArea = areaByStopId[stopIds[toIndex]];
+        if (toArea != null) {
+          neededAreaPairs.add(_farePairKey(fromArea, toArea));
+        }
+      }
+    }
+  }
+  if (neededAreaPairs.isEmpty) return const {};
+
+  final amountByProductId = <String, double>{};
+  final productTable = CsvTable(fareProductsText);
+  for (final row in productTable.rows) {
+    if (productTable.value(row, 'rider_category_id') != defaultRiderCategory ||
+        productTable.value(row, 'fare_media_id') != cashMediaId ||
+        productTable.value(row, 'currency') != 'MYR') {
+      continue;
+    }
+    final id = productTable.value(row, 'fare_product_id');
+    final amount = double.tryParse(productTable.value(row, 'amount'));
+    if (id.isNotEmpty && amount != null && amount >= 0) {
+      amountByProductId[id] = amount;
+    }
+  }
+  if (amountByProductId.isEmpty) return const {};
+
+  final amountByAreaPair = <String, double>{};
+  final ruleTable = CsvTable(fareLegRulesText);
+  for (final row in ruleTable.rows) {
+    final pair = _farePairKey(
+      ruleTable.value(row, 'from_area_id'),
+      ruleTable.value(row, 'to_area_id'),
+    );
+    if (!neededAreaPairs.contains(pair)) continue;
+    final amount = amountByProductId[ruleTable.value(row, 'fare_product_id')];
+    if (amount != null) amountByAreaPair[pair] = amount;
+  }
+
+  final result = <String, double>{};
+  for (final route in routes) {
+    final stopIds = (route['stopIds'] as List<dynamic>).cast<String>().toList();
+    for (var fromIndex = 0; fromIndex < stopIds.length - 1; fromIndex++) {
+      final rawFrom = stopIds[fromIndex].replaceFirst('$sourceId:', '');
+      final fromArea = areaByStopId[rawFrom];
+      if (fromArea == null) continue;
+      for (var toIndex = fromIndex + 1; toIndex < stopIds.length; toIndex++) {
+        final rawTo = stopIds[toIndex].replaceFirst('$sourceId:', '');
+        final toArea = areaByStopId[rawTo];
+        if (toArea == null) continue;
+        final amount = amountByAreaPair[_farePairKey(fromArea, toArea)];
+        if (amount != null) {
+          result[_farePairKey(stopIds[fromIndex], stopIds[toIndex])] = amount;
+        }
+      }
+    }
+  }
+  return result;
+}
+
+String _farePairKey(String from, String to) => '$from\u001f$to';
 
 void _addOfficialPenangFerryConnector({
   required List<Map<String, dynamic>> routes,

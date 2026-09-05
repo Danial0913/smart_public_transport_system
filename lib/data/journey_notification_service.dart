@@ -36,10 +36,6 @@ class JourneyNotificationService {
 
   Future<void> _initialise() async {
     tz_data.initializeTimeZones();
-    // This application only plans journeys inside Malaysia.
-    // Asia/Kuching is the canonical Malaysia (UTC+8) zone included by the
-    // compact timezone database. Asia/Kuala_Lumpur is an IANA alias that is
-    // omitted from that bundled data set.
     tz.setLocalLocation(tz.getLocation('Asia/Kuching'));
 
     await _notifications.initialize(
@@ -68,7 +64,6 @@ class JourneyNotificationService {
   void _selectJourney(String? journeyId) {
     final value = journeyId?.trim();
     if (value == null || value.isEmpty) return;
-    // Clearing first also allows two taps on the same reminder to notify UI.
     selectedJourneyId.value = null;
     selectedJourneyId.value = value;
   }
@@ -203,8 +198,6 @@ class JourneyNotificationService {
       await initialise();
       await _notifications.cancel(id: _notificationId(journeyId));
     } catch (_) {
-      // Removing a saved plan must still succeed if the platform notification
-      // service is temporarily unavailable.
     }
   }
 
