@@ -1,0 +1,32 @@
+# Optional PAID deployment: review Render's estimate before creating resources.
+# Select backend/render.yaml as the Blueprint Path in Render.
+services:
+  - type: web
+    name: smart-transport-recovery
+    runtime: python
+    plan: 0.5c-512mb
+    region: singapore
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python serve.py
+    healthCheckPath: /health
+    autoDeployTrigger: "off"
+    disk:
+      name: recovery-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: RECOVERY_DATABASE
+        value: /var/data/recovery.db
+      - key: RECOVERY_SECRET
+        generateValue: true
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: PYTHONUNBUFFERED
+        value: "1"
